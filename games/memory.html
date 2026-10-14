@@ -115,14 +115,36 @@
   /* ---- board ---- */
   #board {
     flex: 1; width: 100%; box-sizing: border-box;
-    display: grid; gap: clamp(6px, 1.6vw, 14px);
+    --gap: clamp(6px, 1.6vw, 14px);
+    display: grid; gap: var(--gap);
     padding: clamp(10px, 2.4vw, 22px);
     align-content: center; justify-content: center;
     grid-template-columns: repeat(var(--cols, 4), minmax(0, 1fr));
+    grid-template-rows: repeat(var(--rows, 4), minmax(0, 1fr));
+  }
+  @supports (container-type: size) {
+    /* size cards from BOTH board dimensions so they keep the 3:4 card
+       ratio and never overflow the fixed-height panel */
+    #board {
+      container-type: size;
+      grid-template-columns: repeat(var(--cols, 4), auto);
+      grid-template-rows: repeat(var(--rows, 4), auto);
+    }
+    .card {
+      contain: none;
+      width: min(
+        calc((100cqw - (var(--cols, 4) - 1) * var(--gap)) / var(--cols, 4)),
+        calc((100cqh - (var(--rows, 4) - 1) * var(--gap)) / var(--rows, 4) * 3 / 4)
+      );
+      aspect-ratio: 3 / 4;
+    }
   }
   .card {
     position: relative;
-    aspect-ratio: 3 / 4;
+    /* fallback (no container queries): fill the height-constrained grid
+       cell instead of deriving height from width via aspect-ratio, which
+       overflowed short viewports */
+    contain: size;
     perspective: 700px;
     background: none; border: none; padding: 0;
     font-family: inherit; cursor: pointer;
@@ -339,6 +361,7 @@ function shuffle(arr) {
 function buildBoard() {
   const cfg = DIFFS[diff];
   boardEl.style.setProperty('--cols', cfg.cols);
+  boardEl.style.setProperty('--rows', cfg.rows);
   boardEl.innerHTML = '';
   cards = [];
   const faces = shuffle(EMOJIS.slice(0, cfg.pairs));
@@ -351,7 +374,7 @@ function buildBoard() {
     btn.innerHTML =
       '<span class="cardInner">' +
         '<span class="face faceDown">&#10022;</span>' +
-        '<span class="face faceUp"></span>' +
+        '<span class="face faceUp">' + emoji + '</span>' +
       '</span>';
     const card = { emoji, up: false, matched: false, el: btn };
     btn.addEventListener('click', () => onCard(card));

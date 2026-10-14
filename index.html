@@ -231,7 +231,11 @@ const GAMES = [
 function render() {
   const grid = document.getElementById("game-grid");
   let playable = 0, soon = 0;
-  for (const g of GAMES) {
+  // Ready-to-play games always come first; "soon" cards follow.
+  const ordered = [...GAMES].sort((a, b) =>
+    (a.status === "play" ? 0 : 1) - (b.status === "play" ? 0 : 1)
+  );
+  for (const g of ordered) {
     const isPlay = g.status === "play";
     if (isPlay) playable++; else soon++;
     const tag = isPlay ? "a" : "div";

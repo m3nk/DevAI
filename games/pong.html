@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NEON PONG</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #04060d; overflow: hidden;
+    font-family: "Courier New", Courier, monospace;
+    user-select: none;
+  }
+  #stage {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #wrap { position: relative; }
+  #wrap::before { /* vignette */
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 5;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.55) 100%);
+  }
+  #wrap::after { /* scanlines */
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 6;
+    background: repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 3px);
+  }
+  #cvs { display: block; background: #070b16; }
+
+  .overlay {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; background: rgba(4,7,15,.72); backdrop-filter: blur(3px);
+    color: #cfeeff; text-align: center;
+  }
+  .hidden { display: none !important; }
+
+  h1.title {
+    margin: 0; font-size: 64px; letter-spacing: .28em; font-weight: 900;
+    color: #eafcff;
+    text-shadow: 0 0 12px #22d3ee, 0 0 42px rgba(34,211,238,.6), 6px 4px 0 rgba(251,146,60,.55);
+  }
+  .sub { color: #7ea8c4; letter-spacing: .3em; font-size: 13px; margin-top: -6px; }
+
+  .row { display: flex; align-items: center; gap: 10px; }
+  .rowLabel {
+    width: 130px; text-align: right; font-size: 14px; letter-spacing: .25em;
+    color: #6d92ab;
+  }
+  .row.cursor .rowLabel { color: #22d3ee; text-shadow: 0 0 10px rgba(34,211,238,.8); }
+  .opt {
+    padding: 9px 18px; font-family: inherit; font-size: 14px; letter-spacing: .18em;
+    color: #9cc6dd; background: rgba(10,16,32,.75);
+    border: 1px solid rgba(34,211,238,.28); border-radius: 4px; cursor: pointer;
+    transition: all .12s;
+  }
+  .opt:hover { color: #eafcff; border-color: rgba(34,211,238,.7); }
+  .opt.sel {
+    color: #061018; background: #22d3ee; border-color: #67e8f9;
+    box-shadow: 0 0 14px rgba(34,211,238,.75);
+    font-weight: bold;
+  }
+  .big {
+    margin-top: 10px; padding: 14px 46px; font-size: 20px; letter-spacing: .3em;
+    color: #0b0f06; background: #fb923c; border: none; border-radius: 4px;
+    font-family: inherit; font-weight: 900; cursor: pointer;
+    box-shadow: 0 0 22px rgba(251,146,60,.7);
+  }
+  .big:hover { background: #fdba74; box-shadow: 0 0 34px rgba(251,146,60,.95); }
+  .ghostBtn {
+    padding: 10px 26px; font-family: inherit; font-size: 14px; letter-spacing: .2em;
+    color: #9cc6dd; background: transparent; border: 1px solid rgba(156,198,221,.4);
+    border-radius: 4px; cursor: pointer;
+  }
+  .ghostBtn:hover { color: #fff; border-color: #fff; }
+  .help { color: #557488; font-size: 12px; letter-spacing: .15em; line-height: 1.9; }
+  #winText { font-size: 44px; font-weight: 900; letter-spacing: .22em; margin: 0;
+    color: #eafcff; text-shadow: 0 0 14px #22d3ee, 0 0 40px rgba(34,211,238,.5); }
+  #statText { color: #8fc0da; font-size: 15px; letter-spacing: .12em; line-height: 2; }
+  #pauseTitle { font-size: 40px; font-weight: 900; letter-spacing: .4em; color: #eafcff;
+    text-shadow: 0 0 16px rgba(34,211,238,.9); }
+
+  #muteBtn {
+    position: absolute; top: 10px; right: 12px; z-index: 12;
+    background: rgba(10,16,32,.7); border: 1px solid rgba(34,211,238,.35);
+    color: #cfeeff; font-size: 18px; line-height: 1; padding: 6px 10px;
+    border-radius: 4px; cursor: pointer; font-family: inherit;
+  }
+  #muteBtn:hover { border-color: #22d3ee; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="wrap">
+    <canvas id="cvs"></canvas>
+    <button id="muteBtn" title="Mute (M)">&#128266;</button>
+
+    <div id="menu" class="overlay">
+      <h1 class="title">NEON&nbsp;PONG</h1>
+      <div class="sub">ARCADE CLASSIC &bull; REBUILT</div>
+
+      <div class="row" id="rowMode">
+        <span class="rowLabel">MODE</span>
+        <button class="opt" data-group="mode" data-val="1p">1P vs CPU</button>
+        <button class="opt" data-group="mode" data-val="2p">2 PLAYERS</button>
+        <button class="opt" data-group="mode" data-val="cpu">CPU vs CPU</button>
+      </div>
+      <div class="row" id="rowDiff">
+        <span class="rowLabel">CPU</span>
+        <button class="opt" data-group="diff" data-val="easy">EASY</button>
+        <button class="opt" data-group="diff" data-val="normal">NORMAL</button>
+        <button class="opt" data-group="diff" data-val="hard">HARD</button>
+      </div>
+      <div class="row" id="rowPts">
+        <span class="rowLabel">PLAY TO</span>
+        <button class="opt" data-group="pts" data-val="5">5</button>
+        <button class="opt" data-group="pts" data-val="11">11</button>
+        <button class="opt" data-group="pts" data-val="21">21</button>
+      </div>
+
+      <button class="big" id="startBtn">START</button>
+      <div class="help">
+        MOVE&nbsp;&nbsp;W&nbsp;/&nbsp;S&nbsp;&nbsp;or&nbsp;&nbsp;MOUSE&nbsp;(1P)&nbsp;&nbsp;&nbsp;&nbsp;P2&nbsp;&nbsp;&uarr;&nbsp;/&nbsp;&darr;&nbsp;(2P only)<br>
+        SPACE or P = PAUSE&nbsp;&nbsp;&nbsp;&nbsp;M = MUTE&nbsp;&nbsp;&nbsp;&nbsp;MENU KEYS: arrows + enter
+      </div>
+    </div>
+
+    <div id="pauseOv" class="overlay hidden">
+      <div id="pauseTitle">PAUSED</div>
+      <button class="ghostBtn" id="resumeBtn">RESUME (SPACE)</button>
+      <button class="ghostBtn" id="quitBtn">QUIT TO MENU</button>
+    </div>
+
+    <div id="overOv" class="overlay hidden">
+      <div id="winText">PLAYER WINS</div>
+      <div id="statText"></div>
+      <button class="big" id="rematchBtn">REMATCH</button>
+      <button class="ghostBtn" id="toMenuBtn">MAIN MENU</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ============================================================
+   NEON PONG — single-file arcade Pong
+   Fixed-timestep physics (60 Hz), HiDPI crisp canvas,
+   Web Audio SFX, particles, screen shake, CPU AI, attract mode.
+   ============================================================ */
+
+/* ---- tunable physics constants (logical units, per second) ---- */
+const LOGICAL_W   = 1280;        // logical playfield width
+const LOGICAL_H   = 720;         // logical playfield height (16:9)
+const STEP        = 1000 / 60;   // fixed simulation timestep (ms)
+const PW          = 16;          // paddle width
+const PH          = 110;         // paddle height
+const PMARGIN     = 44;          // paddle distance from side wall
+const PSPEED      = 640;         // human paddle speed (px/s)
+const BR          = 11;          // ball radius
+const SERVE_SPEED = 470;         // initial ball speed on a serve
+const MAX_SPEED   = 1080;        // hard cap on ball speed
+const HIT_ACCEL   = 1.045;       // speed multiplier per paddle hit
+const RALLY_ACCEL_HITS = 20;     // after N rally hits, extra flat accel per hit
+const RALLY_ACCEL      = 10;
+const MAX_ANGLE   = 60 * Math.PI / 180;  // max outgoing angle off the paddle
+const SERVE_DELAY = 1000;        // pause between points (ms)
+const TRAIL_LEN   = 14;          // ball trail samples
+const CURVE_POWER = 0.45;        // spin -> curve rotation strength
+const SPIN_DECAY  = 0.985;       // spin decay per sim step
+
+/* AI difficulty: max speed px/s, reaction delay s, aim error px, wall-bounce prediction */
+const AI_CFG = {
+  easy:   { speed: 300, delay: 0.28, err: 95, predict: false },
+  normal: { speed: 470, delay: 0.12, err: 42, predict: false },
+  hard:   { speed: 660, delay: 0.04, err: 8,  predict: true  }
+};
+
+/* ---- DOM ---- */
+const cvs       = document.getElementById('cvs');
+const ctx       = cvs.getContext('2d');
+const wrapEl    = document.getElementById('wrap');
+const menuEl    = document.getElementById('menu');
+const pauseOvEl = document.getElementById('pauseOv');
+const overOvEl  = document.getElementById('overOv');
+const winTextEl = document.getElementById('winText');
+const statTextEl= document.getElementById('statText');
+const startBtn  = document.getElementById('startBtn');
+const resumeBtn = document.getElementById('resumeBtn');
+const quitBtn   = document.getElementById('quitBtn');
+const rematchBtn= document.getElementById('rematchBtn');
+const toMenuBtn = document.getElementById('toMenuBtn');
+const muteBtn   = document.getElementById('muteBtn');
+const rowEls    = {
+  mode: document.getElementById('rowMode'),
+  diff: document.getElementById('rowDiff'),
+  pts:  document.getElementById('rowPts')
+};
+
+/* ---- game state ---- */
+let S = 1;                        // canvas scale (cvs.width / LOGICAL_W)
+let state = 'menu';               // menu | playing | paused | gameover
+let mode = '1p';                  // 1p | 2p | cpu
+let diff = 'normal';
+let winScore = 11;
+let muted = false;
+
+const scores   = [0, 0];          // [left, right]
+const paddles  = [
+  { x: PMARGIN,            y: LOGICAL_H / 2, vy: 0, squash: 0, target: LOGICAL_H / 2, aiTimer: 0 },
+  { x: LOGICAL_W - PMARGIN - PW, y: LOGICAL_H / 2, vy: 0, squash: 0, target: LOGICAL_H / 2, aiTimer: 0 }
+];
+const ball = { x: LOGICAL_W / 2, y: LOGICAL_H / 2, vx: 0, vy: 0, spin: 0 };
+let serveTimer = SERVE_DELAY;
+let serveDir   = 1;               // +1 serve toward right, -1 toward left
+let rallyHits  = 0;
+let longestRally = 0;
+let totalRallies = 0;
+let matchStart = 0;
+let matchElapsedMs = 0;
+
+const particles = [];
+const trail = [];
+let shake = 0, flash = 0;
+
+const keys = Object.create(null);
+let mouseY = null;
+let mouseActive = false;        // 1P: mouse drives left paddle once the player moves it
+
+/* ---- audio (Web Audio, no files) ---- */
+let AC = null;
+function ac() {
+  if (!AC) {
+    try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; }
+  }
+  if (AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function tone(freq, dur, type, gain, slideTo, when) {
+  if (muted) return;
+  const c = ac();
+  if (!c) return;
+  const t0 = c.currentTime + (when || 0);
+  const o = c.createOscillator();
+  const g = c.createGain();
+  o.type = type || 'square';
+  o.frequency.setValueAtTime(freq, t0);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+  g.gain.setValueAtTime(gain || 0.12, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g); g.connect(c.destination);
+  o.start(t0); o.stop(t0 + dur + 0.02);
+}
+const spdRatio = () => Math.hypot(ball.vx, ball.vy) / MAX_SPEED;
+const sfxHit  = () => tone(190 + spdRatio() * 430, 0.06, 'square', 0.11);
+const sfxWall = () => tone(120, 0.07, 'sine', 0.14, 60);
+const sfxServe= () => tone(330, 0.05, 'triangle', 0.08);
+function sfxGoal() {
+  tone(150, 0.28, 'sawtooth', 0.16, 45);
+  tone(95,  0.34, 'triangle', 0.22, 30);
+}
+function sfxWin() {
+  [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, 'square', 0.1, null, i * 0.13));
+}
+function sfxMatchPoint() { tone(880, 0.1, 'triangle', 0.08, 1320); }
+
+/* ---- sizing: HiDPI-crisp, letterboxed 16:9 ---- */
+function resize() {
+  const availW = window.innerWidth, availH = window.innerHeight;
+  const fit = Math.min(availW / LOGICAL_W, availH / LOGICAL_H);
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const cssW = Math.max(320, Math.floor(LOGICAL_W * fit));
+  const cssH = Math.floor(cssW * LOGICAL_H / LOGICAL_W);
+  cvs.style.width = cssW + 'px';
+  cvs.style.height = cssH + 'px';
+  cvs.width  = Math.floor(cssW * dpr);
+  cvs.height = Math.floor(cssH * dpr);
+  S = cvs.width / LOGICAL_W;
+  wrapEl.style.width = cssW + 'px';
+  wrapEl.style.height = cssH + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ---- match control ---- */
+function resetBall(dir) {
+  ball.x = LOGICAL_W / 2; ball.y = LOGICAL_H / 2;
+  ball.spin = 0;
+  const ang = (Math.random() * 0.6 - 0.3);          // gentle serve angle
+  ball.vx = dir * Math.cos(ang) * SERVE_SPEED;
+  ball.vy = Math.sin(ang) * SERVE_SPEED;
+  trail.length = 0;
+}
+function resetMatch() {
+  scores[0] = 0; scores[1] = 0;
+  paddles[0].y = paddles[1].y = LOGICAL_H / 2;
+  paddles[0].vy = paddles[1].vy = 0;
+  paddles[0].squash = paddles[1].squash = 0;
+  particles.length = 0;
+  rallyHits = 0; longestRally = 0; totalRallies = 0;
+  serveTimer = SERVE_DELAY;
+  serveDir = Math.random() < 0.5 ? -1 : 1;
+  mouseActive = false;
+  resetBall(serveDir);
+  matchStart = performance.now();
+  matchElapsedMs = 0;
+}
+function showOverlay(el) { menuEl.classList.add('hidden'); pauseOvEl.classList.add('hidden'); overOvEl.classList.add('hidden'); if (el) el.classList.remove('hidden'); }
+
+function startMatch() {
+  if (state === 'menu') applyMenuSelection();
+  resetMatch();
+  state = 'playing';
+  showOverlay(null);
+  ac(); // unlock audio on user gesture
+}
+function toMenu() {
+  state = 'menu';
+  resetMatch();          // attract mode: CPU vs CPU behind the menu
+  showOverlay(menuEl);
+  refreshMenu();
+}
+function pauseGame()  { if (state !== 'playing') return; state = 'paused'; showOverlay(pauseOvEl); }
+function resumeGame() { if (state !== 'paused') return; state = 'playing'; showOverlay(null); }
+function endMatch(winner) {
+  state = 'gameover';
+  matchElapsedMs = performance.now() - matchStart;
+  const names = mode === 'cpu' ? ['CPU 1', 'CPU 2'] : (mode === '2p' ? ['PLAYER 1', 'PLAYER 2'] : ['PLAYER', 'CPU']);
+  winTextEl.textContent = names[winner] + ' WINS';
+  winTextEl.style.textShadow = winner === 0
+    ? '0 0 14px #22d3ee, 0 0 44px rgba(34,211,238,.6)'
+    : '0 0 14px #fb923c, 0 0 44px rgba(251,146,60,.6)';
+  const secs = Math.floor(matchElapsedMs / 1000);
+  statTextEl.innerHTML =
+    scores[0] + ' &mdash; ' + scores[1] + '<br>' +
+    'LONGEST RALLY: ' + longestRally + ' HITS<br>' +
+    'TOTAL POINTS: ' + (scores[0] + scores[1]) + '&nbsp;&nbsp;TIME: ' +
+    Math.floor(secs / 60) + 'm ' + (secs % 60) + 's';
+  showOverlay(overOvEl);
+  sfxWin();
+}
+
+/* ---- scoring ---- */
+function scorePoint(scorer) {
+  scores[scorer]++;
+  if (rallyHits > longestRally) longestRally = rallyHits;
+  totalRallies++;
+  shake = Math.max(shake, 16);
+  flash = 0.55;
+  spawnBurst(scorer === 0 ? LOGICAL_W - 8 : 8, ball.y, scorer === 0 ? '#22d3ee' : '#fb923c', 46);
+  sfxGoal();
+  if (scores[scorer] >= winScore) {
+    endMatch(scorer);
+    return;
+  }
+  rallyHits = 0;
+  serveTimer = SERVE_DELAY;
+  serveDir = scorer === 0 ? 1 : -1;   // serve toward the player who lost the point
+  resetBall(serveDir);
+  // match-point cue for the leader or the one-trail player reaching parity-1
+  if (scores[scorer] === winScore - 1) sfxMatchPoint();
+}
+
+/* ---- particles ---- */
+function spawnBurst(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = 60 + Math.random() * 420;
+    particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: 1, decay: 0.02 + Math.random() * 0.03, size: 1.5 + Math.random() * 3.5, color });
+  }
+}
+
+/* ---- AI ---- */
+function predictY(paddleSideX) {
+  // time for ball to reach the paddle plane, folding wall bounces
+  if (ball.vx === 0) return LOGICAL_H / 2;
+  const t = (paddleSideX - ball.x) / ball.vx;
+  if (t <= 0) return ball.y;
+  let y = ball.y + ball.vy * t;
+  const range = LOGICAL_H - 2 * BR;
+  y = ((y - BR) % (2 * range) + 2 * range) % (2 * range);
+  if (y > range) y = 2 * range - y;
+  return y + BR;
+}
+function aiMove(p, side, cfg, dt) {
+  p.aiTimer -= STEP;
+  const toward = (side === 0 && ball.vx < 0) || (side === 1 && ball.vx > 0);
+  if (p.aiTimer <= 0) {
+    p.aiTimer = cfg.delay * 1000;
+    if (toward) {
+      const face = side === 0 ? p.x + PW + BR : p.x - BR;
+      p.target = (cfg.predict ? predictY(face) : ball.y + ball.vy * 0.12)
+               + (Math.random() - 0.5) * 2 * cfg.err;
+    } else {
+      p.target = LOGICAL_H / 2 + (Math.random() - 0.5) * 140;
+    }
+  }
+  const old = p.y;
+  const dy = p.target - p.y;
+  const max = cfg.speed * dt;
+  p.y += Math.max(-max, Math.min(max, dy));
+  p.y = Math.max(PH / 2, Math.min(LOGICAL_H - PH / 2, p.y));
+  p.vy = (p.y - old) / dt;
+}
+
+/* ---- simulation step (fixed dt = STEP/1000 s) ---- */
+function clampPaddle(p) { p.y = Math.max(PH / 2, Math.min(LOGICAL_H - PH / 2, p.y)); }
+
+function step() {
+  // decay juice every step regardless of state
+  shake *= 0.86; if (shakes_low()) shake = 0;
+  flash *= 0.85; if (flash < 0.01) flash = 0;
+  paddles[0].squash *= 0.82; paddles[1].squash *= 0.82;
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const pt = particles[i];
+    pt.x += pt.vx * STEP / 1000; pt.y += pt.vy * STEP / 1000;
+    pt.vx *= 0.97; pt.vy *= 0.97;
+    pt.life -= pt.decay;
+    if (pt.life <= 0) particles.splice(i, 1);
+  }
+
+  if (state !== 'playing' && state !== 'menu') return;   // paused/gameover freeze
+  const attract = state === 'menu';                       // demo runs CPU vs CPU
+  const dt = STEP / 1000;
+
+  if (serveTimer > 0) {
+    serveTimer -= STEP;
+    if (serveTimer <= 0 && !attract) sfxServe();
+    if (serveTimer <= 0) serveTimer = 0;
+    return;                                                // ball frozen during countdown
+  }
+
+  /* paddle control — 1P: human = LEFT (W/S), CPU = RIGHT; CPU vs CPU: both AI */
+  // Left paddle
+  if (attract) {
+    aiMove(paddles[0], 0, AI_CFG.easy, dt);
+  } else if (mode === 'cpu') {
+    aiMove(paddles[0], 0, AI_CFG[diff], dt);
+  } else {  // 1p / 2p: human-controlled left paddle
+    const old = paddles[0].y;
+    const dir = (keys['KeyW'] ? -1 : 0) + (keys['KeyS'] ? 1 : 0);
+    if (dir !== 0) {
+      mouseActive = false;                     // keyboard takes priority back
+      paddles[0].y += dir * PSPEED * dt;
+    } else if (mode === '1p' && mouseActive && mouseY !== null) {
+      const dy = mouseY - paddles[0].y;        // 1P: mouse drives left paddle
+      const max = PSPEED * 1.6 * dt;
+      paddles[0].y += Math.max(-max, Math.min(max, dy));
+    }
+    clampPaddle(paddles[0]);
+    paddles[0].vy = (paddles[0].y - old) / dt;
+  }
+  // Right paddle
+  if (attract) {
+    aiMove(paddles[1], 1, AI_CFG.normal, dt);
+  } else if (mode === '1p') {
+    aiMove(paddles[1], 1, AI_CFG[diff], dt);   // CPU opponent
+  } else if (mode === '2p') {
+    const old = paddles[1].y;
+    const dir = (keys['ArrowUp'] ? -1 : 0) + (keys['ArrowDown'] ? 1 : 0);
+    paddles[1].y += dir * PSPEED * dt;
+    clampPaddle(paddles[1]);
+    paddles[1].vy = (paddles[1].y - old) / dt;
+  } else { // cpu mode: second AI
+    aiMove(paddles[1], 1, AI_CFG[diff], dt);
+  }
+
+  /* ball spin curve */
+  if (ball.spin !== 0) {
+    const a = ball.spin * CURVE_POWER * dt;
+    const c = Math.cos(a), sn = Math.sin(a);
+    const nvx = ball.vx * c - ball.vy * sn;
+    ball.vy = ball.vx * sn + ball.vy * c;
+    ball.vx = nvx;
+    ball.spin *= SPIN_DECAY;
+    if (Math.abs(ball.spin) < 0.002) ball.spin = 0;
+  }
+
+  /* ball move */
+  ball.x += ball.vx * dt;
+  ball.y += ball.vy * dt;
+
+  /* wall bounce */
+  if (ball.y < BR && ball.vy < 0) {
+    ball.y = BR; ball.vy = -ball.vy; ball.spin *= 0.5;
+    spawnBurst(ball.x, ball.y, '#9cc6dd', 8); sfxWall();
+  } else if (ball.y > LOGICAL_H - BR && ball.vy > 0) {
+    ball.y = LOGICAL_H - BR; ball.vy = -ball.vy; ball.spin *= 0.5;
+    spawnBurst(ball.x, ball.y, '#9cc6dd', 8); sfxWall();
+  }
+
+  /* paddle collisions */
+  for (let side = 0; side < 2; side++) {
+    const p = paddles[side];
+    const approaching = side === 0 ? ball.vx < 0 : ball.vx > 0;
+    if (!approaching) continue;
+    const face = side === 0 ? p.x + PW : p.x;
+    const hitBand = PH / 2 + BR;
+    const within = side === 0
+      ? (ball.x - BR <= face && ball.x - BR > p.x - 24)
+      : (ball.x + BR >= face && ball.x + BR < p.x + PW + 24);
+    if (within && Math.abs(ball.y - p.y) <= hitBand) {
+      const rel = Math.max(-1, Math.min(1, (ball.y - p.y) / (PH / 2)));
+      let speed = Math.hypot(ball.vx, ball.vy) * HIT_ACCEL;
+      rallyHits++;
+      if (rallyHits > RALLY_ACCEL_HITS) speed += RALLY_ACCEL;   // long-rally acceleration
+      speed = Math.min(speed, MAX_SPEED);
+      const ang = rel * MAX_ANGLE;
+      const dir = side === 0 ? 1 : -1;
+      ball.vx = dir * Math.cos(ang) * speed;
+      ball.vy = Math.sin(ang) * speed;
+      ball.spin = Math.max(-700, Math.min(700, p.vy)) * 0.0009;
+      ball.y = Math.max(BR, Math.min(LOGICAL_H - BR, ball.y));
+      ball.x = side === 0 ? face + BR : face - BR;
+      p.squash = 1;
+      shake = Math.max(shake, 4);
+      spawnBurst(face, ball.y, side === 0 ? '#22d3ee' : '#fb923c', 12);
+      sfxHit();
+    }
+  }
+
+  /* goal */
+  if (ball.x < -BR * 3)       scorePoint(1);   // right scores
+  else if (ball.x > LOGICAL_W + BR * 3) scorePoint(0);
+
+  /* trail */
+  trail.push({ x: ball.x, y: ball.y });
+  if (trail.length > TRAIL_LEN) trail.shift();
+}
+function shakes_low() { return shake < 0.3; }
+
+/* ---- rendering ---- */
+function draw(now) {
+  ctx.setTransform(S, 0, 0, S, 0, 0);
+  if (shake > 0.3) ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
+
+  // background
+  ctx.fillStyle = '#070b16';
+  ctx.fillRect(-20, -20, LOGICAL_W + 40, LOGICAL_H + 40);
+
+  // center net
+  ctx.strokeStyle = 'rgba(140,180,255,.18)';
+  ctx.lineWidth = 4;
+  ctx.setLineDash([12, 18]);
+  ctx.beginPath();
+  ctx.moveTo(LOGICAL_W / 2, 0); ctx.lineTo(LOGICAL_W / 2, LOGICAL_H);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // HUD scores
+  ctx.textAlign = 'center';
+  ctx.font = '900 140px "Courier New", monospace';
+  ctx.fillStyle = 'rgba(34,211,238,.16)';
+  ctx.fillText(String(scores[0]), LOGICAL_W * 0.28, 150);
+  ctx.fillStyle = 'rgba(251,146,60,.16)';
+  ctx.fillText(String(scores[1]), LOGICAL_W * 0.72, 150);
+
+  // match-point indicator
+  if ((state === 'playing' || state === 'paused') && winScore > 1) {
+    const pulse = 0.45 + 0.35 * Math.sin(now / 180);
+    for (let i = 0; i < 2; i++) {
+      if (scores[i] === winScore - 1) {
+        ctx.font = 'bold 26px "Courier New", monospace';
+        ctx.fillStyle = (i === 0 ? 'rgba(34,211,238,' : 'rgba(251,146,60,') + pulse.toFixed(2) + ')';
+        ctx.fillText('MATCH POINT', LOGICAL_W * (i === 0 ? 0.28 : 0.72), 195);
+      }
+    }
+  }
+
+  const ballVisible = serveTimer <= 0 || Math.floor(now / 160) % 2 === 0;
+
+  // ball trail
+  if (ballVisible) {
+    for (let i = 0; i < trail.length; i++) {
+      const t = trail[i];
+      const a = (i / trail.length) * 0.30;
+      ctx.fillStyle = 'rgba(255,255,255,' + a.toFixed(3) + ')';
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, BR * (0.3 + 0.6 * i / trail.length), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // ball (stretched along velocity)
+  if (ballVisible) {
+    const sp = Math.hypot(ball.vx, ball.vy);
+    const k = Math.min(sp / MAX_SPEED * 0.55, 0.5);
+    ctx.save();
+    ctx.translate(ball.x, ball.y);
+    ctx.rotate(Math.atan2(ball.vy, ball.vx));
+    ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 26;
+    ctx.fillStyle = '#f4fbff';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, BR * (1 + k), BR * (1 - k * 0.55), 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // paddles (glow + squash)
+  const colors = ['#22d3ee', '#fb923c'];
+  for (let i = 0; i < 2; i++) {
+    const p = paddles[i];
+    const sw = PW * (1 + p.squash * 0.85);
+    const sh = PH * (1 - p.squash * 0.12);
+    const px = i === 0 ? p.x : LOGICAL_W - PMARGIN - sw;
+    ctx.save();
+    ctx.shadowColor = colors[i]; ctx.shadowBlur = 24;
+    ctx.fillStyle = colors[i];
+    ctx.fillRect(px, p.y - sh / 2, sw, sh);
+    ctx.restore();
+  }
+
+  // particles
+  for (const pt of particles) {
+    ctx.globalAlpha = Math.max(0, pt.life);
+    ctx.fillStyle = pt.color;
+    ctx.fillRect(pt.x - pt.size / 2, pt.y - pt.size / 2, pt.size, pt.size);
+  }
+  ctx.globalAlpha = 1;
+
+  // goal flash
+  if (flash > 0.01) {
+    ctx.fillStyle = 'rgba(255,255,255,' + (flash * 0.35).toFixed(3) + ')';
+    ctx.fillRect(-20, -20, LOGICAL_W + 40, LOGICAL_H + 40);
+  }
+}
+
+/* ---- main loop: fixed-timestep accumulator ---- */
+let acc = 0, last = performance.now();
+function frame(now) {
+  requestAnimationFrame(frame);
+  let elapsed = now - last;
+  last = now;
+  if (elapsed > 250) elapsed = 250;    // tab-switch clamp
+  acc += elapsed;
+  while (acc >= STEP) { step(); acc -= STEP; }
+  draw(now);
+}
+requestAnimationFrame(frame);
+
+/* ---- input ---- */
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'ArrowDown') e.preventDefault();
+  ac(); // unlock audio on first gesture
+  if (e.repeat) { keys[e.code] = true; return; }
+  keys[e.code] = true;
+
+  if (e.code === 'KeyM') { toggleMute(); return; }
+
+  if (state === 'menu') {
+    menuKeys(e.code);
+    return;
+  }
+  if (state === 'playing' && (e.code === 'Space' || e.code === 'KeyP' || e.code === 'Escape')) {
+    pauseGame(); return;
+  }
+  if (state === 'paused' && (e.code === 'Space' || e.code === 'KeyP' || e.code === 'Escape')) {
+    resumeGame(); return;
+  }
+  if (state === 'gameover' && (e.code === 'Space' || e.code === 'Enter')) {
+    startMatch(); return;
+  }
+});
+window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+cvs.addEventListener('pointermove', (e) => {
+  const r = cvs.getBoundingClientRect();
+  mouseY = (e.clientY - r.top) / r.height * LOGICAL_H;
+  mouseActive = true;
+});
+cvs.addEventListener('pointerleave', () => { mouseY = null; });
+
+/* ---- menu (mouse + keyboard navigation) ---- */
+const groups = [
+  { key: 'mode', row: rowEls.mode, vals: ['1p', '2p', 'cpu'], i: 0 },
+  { key: 'diff', row: rowEls.diff, vals: ['easy', 'normal', 'hard'], i: 1 },
+  { key: 'pts',  row: rowEls.pts,  vals: ['5', '11', '21'],       i: 1 }
+];
+let cursor = 0;
+function refreshMenu() {
+  for (const g of groups) {
+    const chosen = g.vals[g.i];
+    for (const b of g.row.querySelectorAll('.opt')) {
+      b.classList.toggle('sel', b.dataset.val === chosen);
+    }
+  }
+  Object.values(rowEls).forEach((r, ri) => r.classList.toggle('cursor', ri === cursor));
+}
+function menuKeys(code) {
+  const g = groups[cursor];
+  if (code === 'ArrowUp')   cursor = (cursor + groups.length - 1) % groups.length;
+  else if (code === 'ArrowDown') cursor = (cursor + 1) % groups.length;
+  else if (code === 'ArrowLeft') g.i = (g.i + g.vals.length - 1) % g.vals.length;
+  else if (code === 'ArrowRight') g.i = (g.i + 1) % g.vals.length;
+  else if (code === 'Enter' || code === 'Space') { startMatch(); return; }
+  refreshMenu();
+}
+for (const b of document.querySelectorAll('.opt')) {
+  b.addEventListener('click', () => {
+    const g = groups.find(gr => gr.key === b.dataset.group);
+    g.i = g.vals.indexOf(b.dataset.val);
+    cursor = groups.indexOf(g);
+    refreshMenu(); b.blur(); ac();
+  });
+}
+function applyMenuSelection() {
+  mode = groups[0].vals[groups[0].i];
+  diff = groups[1].vals[groups[1].i];
+  winScore = parseInt(groups[2].vals[groups[2].i], 10);
+}
+
+startBtn.addEventListener('click', () => { startMatch(); startBtn.blur(); });
+resumeBtn.addEventListener('click', () => { resumeGame(); resumeBtn.blur(); });
+quitBtn.addEventListener('click', () => { toMenu(); quitBtn.blur(); });
+rematchBtn.addEventListener('click', () => { startMatch(); rematchBtn.blur(); });
+toMenuBtn.addEventListener('click', () => { toMenu(); toMenuBtn.blur(); });
+
+function toggleMute() {
+  muted = !muted;
+  muteBtn.innerHTML = muted ? '&#128263;' : '&#128266;';
+  muteBtn.blur();
+}
+muteBtn.addEventListener('click', toggleMute);
+
+/* ---- test hooks (identity-stable getters; harmless in play) ---- */
+window.__test = {
+  get state() { return state; },
+  get mode() { return mode; },
+  get scores() { return scores.slice(); },
+  get winScore() { return winScore; },
+  get ball() { return ball; },
+  get paddles() { return paddles; },
+  get serveTimer() { return serveTimer; },
+  get longestRally() { return longestRally; },
+  get errors() { return (window.__errs || []).slice(); }
+};
+
+/* boot: attract mode behind the menu */
+toMenu();
+</script>
+</body>
+</html>

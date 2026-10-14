@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevAI Arcade</title>
+<style>
+  :root {
+    --bg: #0b0e17;
+    --bg2: #111627;
+    --card: #161c31;
+    --card-hover: #1c2440;
+    --border: #26304f;
+    --text: #e8ecf8;
+    --muted: #8b94b3;
+    --accent: #6c8cff;
+    --accent2: #9f6cff;
+    --green: #3ddc97;
+    --amber: #ffc555;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: radial-gradient(1200px 600px at 70% -10%, #1a2145 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+  }
+  header {
+    padding: 48px 24px 8px;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .logo-mark {
+    width: 46px; height: 46px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: grid; place-items: center;
+    font-size: 24px;
+    box-shadow: 0 4px 24px rgba(108,140,255,.35);
+  }
+  h1 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: .5px;
+  }
+  h1 span { color: var(--accent); }
+  .tagline {
+    color: var(--muted);
+    margin-top: 10px;
+    font-size: 15px;
+  }
+  .stats {
+    display: flex;
+    gap: 22px;
+    margin-top: 22px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .stats b { color: var(--text); }
+  main {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 28px 24px 80px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 18px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 22px;
+    text-decoration: none;
+    color: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: transform .15s ease, border-color .15s ease, background .15s ease;
+    position: relative;
+    overflow: hidden;
+  }
+  .card.playable:hover {
+    transform: translateY(-3px);
+    border-color: var(--accent);
+    background: var(--card-hover);
+  }
+  .card .icon {
+    width: 52px; height: 52px;
+    border-radius: 12px;
+    display: grid; place-items: center;
+    font-size: 26px;
+    background: rgba(108,140,255,.12);
+    border: 1px solid rgba(108,140,255,.25);
+  }
+  .card h2 { font-size: 17px; font-weight: 600; }
+  .card p { font-size: 13px; color: var(--muted); line-height: 1.5; flex: 1; }
+  .badge {
+    position: absolute;
+    top: 16px; right: 16px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+    padding: 4px 10px;
+    border-radius: 999px;
+  }
+  .badge.play { background: rgba(61,220,151,.12); color: var(--green); border: 1px solid rgba(61,220,151,.3); }
+  .badge.soon { background: rgba(255,197,85,.1); color: var(--amber); border: 1px solid rgba(255,197,85,.25); }
+  .card.soon { cursor: default; opacity: .75; }
+  .card .play-hint {
+    font-size: 12px;
+    color: var(--accent);
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity .15s ease;
+  }
+  .card.playable:hover .play-hint { opacity: 1; }
+  .add-card {
+    border: 1px dashed var(--border);
+    background: transparent;
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+    min-height: 190px;
+    border-radius: 16px;
+    font-size: 14px;
+    text-align: center;
+    line-height: 1.6;
+    padding: 20px;
+  }
+  .add-card .plus { font-size: 28px; display: block; margin-bottom: 6px; color: var(--border); }
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    padding: 0 24px 40px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">
+    <div class="logo-mark">🕹️</div>
+    <div>
+      <h1>DevAI <span>Arcade</span></h1>
+      <div class="tagline">A growing collection of self-contained HTML games. Pick one and play.</div>
+    </div>
+  </div>
+  <div class="stats">
+    <div><b id="stat-playable">0</b> playable</div>
+    <div><b id="stat-soon">0</b> coming soon</div>
+  </div>
+</header>
+
+<main>
+  <div class="grid" id="game-grid"><!-- cards injected from GAMES registry --></div>
+  <div style="margin-top:18px">
+    <div class="add-card">
+      <span><span class="plus">＋</span>More games on the way.<br>Each game is a single HTML file inside <code>games/</code>.</span>
+    </div>
+  </div>
+</main>
+
+<footer>DevAI — powered by pure HTML5 · no build step · no dependencies</footer>
+
+<script>
+// ─── GAME REGISTRY ─────────────────────────────────────────────
+// To add a game: drop its HTML file in games/, add one entry here.
+//   file    → path to the game html (playable cards only)
+//   status  → 'play' or 'soon'
+const GAMES = [
+  {
+    title: "Snake",
+    icon: "🐍",
+    desc: "The classic. Eat, grow, don't hit yourself.",
+    file: "games/snake.html",
+    status: "soon"
+  },
+  {
+    title: "Pong",
+    icon: "🏓",
+    desc: "Two paddles, one ball, zero mercy. First to 11.",
+    file: "games/pong.html",
+    status: "soon"
+  },
+  {
+    title: "Breakout",
+    icon: "🧱",
+    desc: "Bounce and smash every brick on the wall.",
+    file: "games/breakout.html",
+    status: "soon"
+  },
+  {
+    title: "Memory Match",
+    icon: "🃏",
+    desc: "Flip cards, find pairs, train your brain.",
+    file: "games/memory.html",
+    status: "soon"
+  },
+  {
+    title: "Flappy Square",
+    icon: "🟦",
+    desc: "One button. Endless pipes. Rising rage.",
+    file: "games/flappy.html",
+    status: "soon"
+  },
+  {
+    title: "Tic-Tac-Toe",
+    icon: "⭕",
+    desc: "Beat the AI, or settle for a draw.",
+    file: "games/tictactoe.html",
+    status: "soon"
+  }
+];
+// ───────────────────────────────────────────────────────────────
+
+function render() {
+  const grid = document.getElementById("game-grid");
+  let playable = 0, soon = 0;
+  for (const g of GAMES) {
+    const isPlay = g.status === "play";
+    if (isPlay) playable++; else soon++;
+    const tag = isPlay ? "a" : "div";
+    const href = isPlay ? ` href="${g.file}"` : "";
+    grid.insertAdjacentHTML("beforeend", `
+      <${tag} class="card ${isPlay ? "playable" : "soon"}"${href}>
+        <span class="badge ${isPlay ? "play" : "soon"}">${isPlay ? "Play" : "Soon"}</span>
+        <div class="icon">${g.icon}</div>
+        <h2>${g.title}</h2>
+        <p>${g.desc}</p>
+        ${isPlay ? '<span class="play-hint">▶ Play now</span>' : ""}
+      </${tag}>`);
+  }
+  document.getElementById("stat-playable").textContent = playable;
+  document.getElementById("stat-soon").textContent = soon;
+}
+render();
+</script>
+</body>
+</html>

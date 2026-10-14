@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TIC-TAC-TOE</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #04060d; overflow: hidden;
+    font-family: "Courier New", Courier, monospace;
+    user-select: none; -webkit-user-select: none;
+  }
+  #stage {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #wrap { position: relative; display: flex; flex-direction: column; align-items: stretch; }
+  #wrap::before { /* vignette */
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 5;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.55) 100%);
+  }
+  #wrap::after { /* scanlines */
+    content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 6;
+    background: repeating-linear-gradient(0deg, rgba(255,255,255,.025) 0 1px, transparent 1px 3px);
+  }
+  #hud {
+    display: flex; justify-content: space-between; align-items: baseline;
+    padding: 8px 4px 6px; font-size: 14px; letter-spacing: .18em;
+  }
+  #scoreX { color: #22d3ee; text-shadow: 0 0 10px rgba(34,211,238,.8); }
+  #scoreO { color: #fb923c; text-shadow: 0 0 10px rgba(251,146,60,.8); }
+  #scoreD { color: #7ea8c4; }
+  #cvs { display: block; background: #070b16; }
+  #status {
+    text-align: center; padding: 8px 0 4px; font-size: 15px; letter-spacing: .3em;
+    color: #8fc0da; min-height: 22px;
+  }
+  #status.tx { color: #22d3ee; text-shadow: 0 0 12px rgba(34,211,238,.8); }
+  #status.to { color: #fb923c; text-shadow: 0 0 12px rgba(251,146,60,.8); }
+
+  .overlay {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; background: rgba(4,7,15,.78); backdrop-filter: blur(3px);
+    color: #cfeeff; text-align: center; overflow: auto; padding: 12px;
+  }
+  .hidden { display: none !important; }
+
+  h1.title {
+    margin: 0; font-size: clamp(24px, 8vw, 58px); letter-spacing: .22em; font-weight: 900;
+    line-height: 1.15; color: #eafcff;
+    text-shadow: 0 0 12px #22d3ee, 0 0 42px rgba(34,211,238,.6), 6px 4px 0 rgba(251,146,60,.55);
+  }
+  .sub { color: #7ea8c4; letter-spacing: .3em; font-size: 12px; margin-top: -4px; }
+
+  .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; }
+  .rowLabel {
+    width: 120px; text-align: right; font-size: 13px; letter-spacing: .22em; color: #6d92ab;
+  }
+  .row.cursor .rowLabel { color: #22d3ee; text-shadow: 0 0 10px rgba(34,211,238,.8); }
+  .row.dim { opacity: .35; pointer-events: none; }
+  .opt {
+    padding: 8px 14px; font-family: inherit; font-size: 13px; letter-spacing: .15em;
+    color: #9cc6dd; background: rgba(10,16,32,.75);
+    border: 1px solid rgba(34,211,238,.28); border-radius: 4px; cursor: pointer;
+    transition: all .12s;
+  }
+  .opt:hover { color: #eafcff; border-color: rgba(34,211,238,.7); }
+  .opt.sel {
+    color: #061018; background: #22d3ee; border-color: #67e8f9;
+    box-shadow: 0 0 14px rgba(34,211,238,.75); font-weight: bold;
+  }
+  .big {
+    margin-top: 6px; padding: 13px 40px; font-size: 19px; letter-spacing: .3em;
+    color: #0b0f06; background: #fb923c; border: none; border-radius: 4px;
+    font-family: inherit; font-weight: 900; cursor: pointer;
+    box-shadow: 0 0 22px rgba(251,146,60,.7);
+  }
+  .big:hover { background: #fdba74; box-shadow: 0 0 34px rgba(251,146,60,.95); }
+  .ghostBtn {
+    padding: 9px 24px; font-family: inherit; font-size: 13px; letter-spacing: .2em;
+    color: #9cc6dd; background: transparent; border: 1px solid rgba(156,198,221,.4);
+    border-radius: 4px; cursor: pointer;
+  }
+  .ghostBtn:hover { color: #fff; border-color: #fff; }
+  .help { color: #557488; font-size: 11px; letter-spacing: .14em; line-height: 1.9; }
+  #winText { font-size: clamp(28px, 7vw, 46px); font-weight: 900; letter-spacing: .2em; margin: 0;
+    color: #eafcff; text-shadow: 0 0 14px #22d3ee, 0 0 40px rgba(34,211,238,.5); }
+  #statText { color: #8fc0da; font-size: 14px; letter-spacing: .12em; line-height: 2; }
+
+  #muteBtn {
+    position: absolute; top: 10px; right: 8px; z-index: 12;
+    background: rgba(10,16,32,.7); border: 1px solid rgba(34,211,238,.35);
+    color: #cfeeff; font-size: 17px; line-height: 1; padding: 5px 9px;
+    border-radius: 4px; cursor: pointer; font-family: inherit;
+  }
+  #muteBtn:hover { border-color: #22d3ee; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="wrap">
+    <div id="hud">
+      <span id="scoreX">X 0</span>
+      <span id="scoreD">DRAWS 0</span>
+      <span id="scoreO">O 0</span>
+    </div>
+    <canvas id="cvs"></canvas>
+    <div id="status">YOUR TURN</div>
+    <button id="muteBtn" title="Mute (M)">&#128266;</button>
+
+    <div id="menu" class="overlay">
+      <h1 class="title">TIC&#183;TAC&#183;TOE</h1>
+      <div class="sub">NEON GRID &bull; 3 IN A ROW</div>
+
+      <div class="row" id="rowMode">
+        <span class="rowLabel">MODE</span>
+        <button class="opt" data-group="mode" data-val="1p">1P vs CPU</button>
+        <button class="opt" data-group="mode" data-val="2p">2 PLAYERS</button>
+      </div>
+      <div class="row" id="rowDiff">
+        <span class="rowLabel">CPU</span>
+        <button class="opt" data-group="diff" data-val="easy">EASY</button>
+        <button class="opt" data-group="diff" data-val="medium">MEDIUM</button>
+        <button class="opt" data-group="diff" data-val="hard">HARD</button>
+      </div>
+      <div class="row" id="rowFirst">
+        <span class="rowLabel">1ST MOVE</span>
+        <button class="opt" data-group="first" data-val="you">YOU</button>
+        <button class="opt" data-group="first" data-val="cpu">CPU</button>
+        <button class="opt" data-group="first" data-val="flip">FLIP</button>
+      </div>
+
+      <button class="big" id="startBtn">START</button>
+      <button class="ghostBtn" id="resetBtn">RESET SCORES</button>
+      <div class="help">
+        CLICK OR ARROWS + ENTER = PLACE&nbsp;&nbsp;&nbsp;&nbsp;R = RESTART<br>
+        ESC = MENU&nbsp;&nbsp;&nbsp;&nbsp;M = MUTE&nbsp;&nbsp;&nbsp;&nbsp;MENU: ARROWS + ENTER
+      </div>
+    </div>
+
+    <div id="overOv" class="overlay hidden">
+      <div id="winText">X WINS!</div>
+      <div id="statText"></div>
+      <button class="big" id="againBtn">PLAY AGAIN</button>
+      <button class="ghostBtn" id="toMenuBtn">MAIN MENU</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ============================================================
+   TIC-TAC-TOE — single-file neon arcade edition
+   HiDPI canvas, animated marks, minimax CPU (unbeatable on HARD),
+   Web Audio SFX, localStorage scoreboard, keyboard play.
+   ============================================================ */
+
+/*AI-START*/
+const LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+function winnerOf(b) {
+  for (const L of LINES)
+    if (b[L[0]] && b[L[0]] === b[L[1]] && b[L[1]] === b[L[2]]) return { p: b[L[0]], line: L };
+  return null;
+}
+function full(b) { return b.every(v => v); }
+function other(p) { return p === 'X' ? 'O' : 'X'; }
+function minimax(b, player, me, alpha, beta, depth) {
+  const w = winnerOf(b);
+  if (w) return w.p === me ? 10 - depth : depth - 10;   // prefer sooner wins, later losses
+  if (full(b)) return 0;
+  depth = depth || 0;
+  const maxing = player === me;
+  let best = maxing ? -99 : 99;
+  for (let i = 0; i < 9; i++) {
+    if (b[i]) continue;
+    b[i] = player;
+    const v = minimax(b, other(player), me, alpha, beta, depth + 1);
+    b[i] = null;
+    if (maxing) { if (v > best) best = v; if (best > alpha) alpha = best; }
+    else        { if (v < best) best = v; if (best < beta)  beta  = best; }
+    if (beta <= alpha) break;
+  }
+  return best;
+}
+function bestMove(bArr, player) {
+  const b = bArr.slice();
+  let best = -99, choices = [];
+  for (let i = 0; i < 9; i++) {
+    if (b[i]) continue;
+    b[i] = player;
+    const v = minimax(b, other(player), player, -999, 999, 1);
+    b[i] = null;
+    if (v > best) { best = v; choices = [i]; }
+    else if (v === best) choices.push(i);
+  }
+  return choices.length ? choices[Math.floor(Math.random() * choices.length)] : -1;
+}
+function immediateWin(b, p) {
+  for (let i = 0; i < 9; i++)
+    if (!b[i]) { b[i] = p; const w = winnerOf(b); b[i] = null; if (w) return i; }
+  return -1;
+}
+function countThreats(b, p) {   // empty cells where p would win next
+  let n = 0;
+  for (let i = 0; i < 9; i++)
+    if (!b[i]) { b[i] = p; if (winnerOf(b)) n++; b[i] = null; }
+  return n;
+}
+function emptyCells(b) { const m = []; for (let i = 0; i < 9; i++) if (!b[i]) m.push(i); return m; }
+function rndOf(a) { return a[Math.floor(Math.random() * a.length)]; }
+function aiChoose(bArr, p, difficulty) {
+  const b = bArr.slice(), emp = emptyCells(b);
+  if (difficulty === 'hard') return bestMove(b, p);
+  const win = immediateWin(b, p);
+  const block = immediateWin(b, other(p));
+  if (difficulty === 'easy') {
+    if (win !== -1 && Math.random() < 0.4) return win;
+    if (block !== -1 && Math.random() < 0.3) return block;
+    return rndOf(emp);
+  }
+  /* medium: always win/block, fork heuristic, ~70% full minimax */
+  if (win !== -1) return win;
+  if (block !== -1) return block;
+  if (Math.random() < 0.7) return bestMove(b, p);
+  for (const i of emp) { b[i] = p; const t = countThreats(b, p); b[i] = null; if (t >= 2) return i; }
+  if (!b[4]) return 4;
+  const corners = [0, 2, 6, 8].filter(i => !b[i]);
+  if (corners.length) return rndOf(corners);
+  return rndOf(emp);
+}
+/*AI-END*/
+
+/* ---- DOM ---- */
+const cvs = document.getElementById('cvs');
+const ctx = cvs.getContext('2d');
+const wrapEl = document.getElementById('wrap');
+const hudEls = {
+  x: document.getElementById('scoreX'),
+  d: document.getElementById('scoreD'),
+  o: document.getElementById('scoreO')
+};
+const statusEl  = document.getElementById('status');
+const menuEl    = document.getElementById('menu');
+const overOvEl  = document.getElementById('overOv');
+const winTextEl = document.getElementById('winText');
+const statTextEl= document.getElementById('statText');
+const startBtn  = document.getElementById('startBtn');
+const resetBtn  = document.getElementById('resetBtn');
+const againBtn  = document.getElementById('againBtn');
+const toMenuBtn = document.getElementById('toMenuBtn');
+const muteBtn   = document.getElementById('muteBtn');
+const rowEls = {
+  mode:  document.getElementById('rowMode'),
+  diff:  document.getElementById('rowDiff'),
+  first: document.getElementById('rowFirst')
+};
+
+/* ---- state ---- */
+const L = 640, PAD = 64, CS = (L - 2 * PAD) / 3;
+let S = 1;
+let state = 'menu';            // menu | playing | over
+let mode = '1p', diff = 'medium', firstSel = 'you';
+let muted = false;
+let board = new Array(9).fill(null);
+let turn = 'X';
+let result = null;             // 'x' | 'o' | 'draw' | null
+let winLine = null;
+let cursor = 4;
+let epoch = 0;                 // cancels pending CPU timers
+let cpuBusy = false;
+let starterFlip = false;
+const markT = new Array(9).fill(0);   // anim start time per cell
+let winAnimT = 0;
+let shake = 0;
+let scores = { x: 0, o: 0, d: 0 };
+const LS_KEY = '***';
+
+/* ---- persistence ---- */
+function loadScores() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) { const j = JSON.parse(raw);
+      scores.x = +j.x || 0; scores.o = +j.o || 0; scores.d = +j.d || 0; }
+  } catch (e) { /* private mode etc. */ }
+}
+function saveScores() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(scores)); } catch (e) {}
+}
+function refreshHud() {
+  hudEls.x.textContent = 'X ' + scores.x;
+  hudEls.d.textContent = 'DRAWS ' + scores.d;
+  hudEls.o.textContent = 'O ' + scores.o;
+}
+
+/* ---- audio (synthesized, lazy AudioContext) ---- */
+let AC = null;
+function ac() {
+  if (!AC) {
+    try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; }
+  }
+  if (AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function tone(freq, dur, type, gain, slideTo, when) {
+  if (muted) return;
+  const c = ac(); if (!c) return;
+  const t0 = c.currentTime + (when || 0);
+  const o = c.createOscillator(), g = c.createGain();
+  o.type = type || 'square';
+  o.frequency.setValueAtTime(freq, t0);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t0 + dur);
+  g.gain.setValueAtTime(gain || 0.12, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g); g.connect(c.destination);
+  o.start(t0); o.stop(t0 + dur + 0.02);
+}
+function sfxPlace(p) {
+  if (p === 'X') { tone(520, 0.07, 'square', 0.1, 660); }
+  else           { tone(340, 0.09, 'triangle', 0.12, 260); }
+}
+function sfxWin()   { [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, 'square', 0.1, null, i * 0.12)); }
+function sfxLose()  { [330, 262, 196, 147].forEach((f, i) => tone(f, 0.24, 'sawtooth', 0.09, null, i * 0.13)); }
+function sfxDraw()  { tone(220, 0.18, 'triangle', 0.1); tone(220, 0.18, 'triangle', 0.1, null, 0.22); }
+function sfxClick() { tone(880, 0.04, 'square', 0.05); }
+
+/* ---- sizing: square board, HiDPI crisp ---- */
+function resize() {
+  const availW = window.innerWidth - 16, availH = window.innerHeight - 110;
+  const fit = Math.max(240, Math.min(availW, availH, 620));
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  cvs.style.width = fit + 'px';
+  cvs.style.height = fit + 'px';
+  cvs.width = Math.floor(fit * dpr);
+  cvs.height = Math.floor(fit * dpr);
+  S = cvs.width / L;
+  wrapEl.style.width = Math.max(fit, 320) + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ---- overlays / flow ---- */
+function showOverlay(el) {
+  menuEl.classList.add('hidden');
+  overOvEl.classList.add('hidden');
+  if (el) el.classList.remove('hidden');
+}
+function setStatus(text, cls) {
+  statusEl.textContent = text;
+  statusEl.className = cls || '';
+}
+function toMenu() {
+  epoch++; cpuBusy = false;
+  state = 'menu';
+  setStatus('SELECT MODE');
+  showOverlay(menuEl);
+  refreshMenu();
+}
+function startMatch() {
+  applyMenu();
+  epoch++;
+  board = new Array(9).fill(null);
+  markT.fill(0);
+  winLine = null; winAnimT = 0; shake = 0;
+  result = null; cpuBusy = false;
+  cursor = 4;
+  if (mode === '1p') {
+    if (firstSel === 'you') turn = 'X';
+    else if (firstSel === 'cpu') turn = 'O';
+    else turn = Math.random() < 0.5 ? 'X' : 'O';
+  } else {
+    starterFlip = !starterFlip;
+    turn = starterFlip ? 'O' : 'X';
+  }
+  state = 'playing';
+  showOverlay(null);
+  ac();
+  updateTurnStatus();
+  maybeCpu();
+}
+function updateTurnStatus() {
+  if (state !== 'playing') return;
+  if (mode === '2p') {
+    setStatus(turn + ' TURN', turn === 'X' ? 'tx' : 'to');
+  } else if (turn === 'X') {
+    setStatus('YOUR TURN', 'tx');
+  } else {
+    setStatus('CPU THINKING...', 'to');
+  }
+}
+function humanTurn() {
+  return state === 'playing' && !cpuBusy && (mode === '2p' || turn === 'X');
+}
+function maybeCpu() {
+  if (mode !== '1p' || state !== 'playing' || turn !== 'O') return;
+  cpuBusy = true;
+  setStatus('CPU THINKING...', 'to');
+  const myEpoch = epoch;
+  setTimeout(() => {
+    if (myEpoch !== epoch || state !== 'playing') return;
+    const mv = aiChoose(board, 'O', diff);
+    cpuBusy = false;
+    if (mv >= 0) doMove(mv, 'O');
+  }, 400 + Math.random() * 200);
+}
+function doMove(i, p) {
+  if (state !== 'playing' || board[i]) return;
+  board[i] = p;
+  markT[i] = performance.now();
+  sfxPlace(p);
+  const w = winnerOf(board);
+  if (w) { finishGame(w.p === 'X' ? 'x' : 'o', w.line); return; }
+  if (full(board)) { finishGame('draw', null); return; }
+  turn = other(p);
+  updateTurnStatus();
+  maybeCpu();
+}
+function finishGame(res, line) {
+  state = 'over';
+  result = res;
+  winLine = line;
+  winAnimT = performance.now();
+  if (res === 'x') scores.x++; else if (res === 'o') scores.o++; else scores.d++;
+  saveScores(); refreshHud();
+  const humanLost = mode === '1p' && res === 'o';
+  if (humanLost) shake = 11;
+  if (res === 'draw') { sfxDraw(); setStatus('DRAW'); }
+  else if (mode === '2p') { sfxWin(); setStatus((res === 'x' ? 'X' : 'O') + ' WINS!', res === 'x' ? 'tx' : 'to'); }
+  else if (res === 'x') { sfxWin(); setStatus('YOU WIN!', 'tx'); }
+  else { setStatus('CPU WINS!', 'to'); }
+  const myEpoch = epoch;
+  setTimeout(() => {
+    if (myEpoch !== epoch) return;
+    let txt;
+    if (res === 'draw') txt = 'DRAW!';
+    else if (mode === '2p') txt = (res === 'x' ? 'X' : 'O') + ' WINS!';
+    else txt = res === 'x' ? 'YOU WIN!' : 'CPU WINS!';
+    winTextEl.textContent = txt;
+    winTextEl.style.textShadow = res === 'o'
+      ? '0 0 14px #fb923c, 0 0 44px rgba(251,146,60,.6)'
+      : '0 0 14px #22d3ee, 0 0 44px rgba(34,211,238,.5)';
+    statTextEl.innerHTML =
+      'X ' + scores.x + ' &nbsp;&bull;&nbsp; DRAWS ' + scores.d + ' &nbsp;&bull;&nbsp; O ' + scores.o +
+      (mode === '1p' ? '<br>CPU DIFFICULTY: ' + diff.toUpperCase() : '');
+    showOverlay(overOvEl);
+    if (res === 'o' && mode === '1p') sfxLose();
+  }, 950);
+}
+
+/* ---- rendering ---- */
+function cellCenter(i) {
+  const c = i % 3, r = Math.floor(i / 3);
+  return { x: PAD + CS * (c + 0.5), y: PAD + CS * (r + 0.5) };
+}
+function drawX(x, y, prog, blur) {
+  const r = CS * 0.30;
+  ctx.strokeStyle = '#22d3ee';
+  ctx.shadowColor = '#22d3ee';
+  ctx.shadowBlur = blur;
+  ctx.lineWidth = 13; ctx.lineCap = 'round';
+  const seg = (x1, y1, x2, y2, t) => {
+    ctx.beginPath(); ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t); ctx.stroke();
+  };
+  if (prog <= 0.5) seg(x - r, y - r, x + r, y + r, prog / 0.5);
+  else { seg(x - r, y - r, x + r, y + r, 1); seg(x + r, y - r, x - r, y + r, (prog - 0.5) / 0.5); }
+}
+function drawO(x, y, prog, blur) {
+  const r = CS * 0.30;
+  ctx.strokeStyle = '#fb923c';
+  ctx.shadowColor = '#fb923c';
+  ctx.shadowBlur = blur;
+  ctx.lineWidth = 13; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * prog);
+  ctx.stroke();
+}
+function draw(now) {
+  ctx.setTransform(S, 0, 0, S, 0, 0);
+  if (shake > 0.3) {
+    ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
+    shake *= 0.88;
+  } else shake = 0;
+
+  ctx.fillStyle = '#070b16';
+  ctx.fillRect(-20, -20, L + 40, L + 40);
+
+  /* grid */
+  ctx.save();
+  ctx.strokeStyle = 'rgba(34,211,238,.5)';
+  ctx.shadowColor = 'rgba(34,211,238,.8)';
+  ctx.shadowBlur = 14;
+  ctx.lineWidth = 5; ctx.lineCap = 'round';
+  for (let k = 1; k < 3; k++) {
+    const p = PAD + CS * k;
+    ctx.beginPath(); ctx.moveTo(p, PAD - 12); ctx.lineTo(p, L - PAD + 12); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(PAD - 12, p); ctx.lineTo(L - PAD + 12, p); ctx.stroke();
+  }
+  ctx.restore();
+
+  /* cursor highlight */
+  if (state === 'playing' && humanTurn()) {
+    const c = cellCenter(cursor);
+    const a = 0.14 + 0.1 * Math.sin(now / 190);
+    ctx.strokeStyle = 'rgba(234,252,255,' + a.toFixed(3) + ')';
+    ctx.lineWidth = 3; ctx.shadowBlur = 0;
+    const h = CS * 0.42;
+    ctx.beginPath();
+    if (ctx.roundRect) ctx.roundRect(c.x - h, c.y - h, h * 2, h * 2, 14);
+    else ctx.rect(c.x - h, c.y - h, h * 2, h * 2);
+    ctx.stroke();
+  }
+
+  /* marks */
+  for (let i = 0; i < 9; i++) {
+    if (!board[i]) continue;
+    const c = cellCenter(i);
+    const inWin = winLine && winLine.indexOf(i) !== -1;
+    const blur = inWin ? 26 + 10 * Math.sin(now / 150) : 16;
+    const prog = Math.max(0, Math.min(1, (now - markT[i]) / 240));
+    if (board[i] === 'X') drawX(c.x, c.y, prog, blur); else drawO(c.x, c.y, prog, blur);
+    ctx.shadowBlur = 0;
+  }
+
+  /* winning line glow sweep */
+  if (winLine) {
+    const a = cellCenter(winLine[0]), b = cellCenter(winLine[2]);
+    const prog = Math.max(0, Math.min(1, (now - winAnimT) / 500));
+    const color = board[winLine[0]] === 'X' ? '34,211,238' : '251,146,60';
+    ctx.save();
+    ctx.strokeStyle = 'rgba(' + color + ',.9)';
+    ctx.shadowColor = 'rgb(' + color + ')';
+    ctx.shadowBlur = 28;
+    ctx.lineWidth = 9; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(a.x + (b.x - a.x) * prog, a.y + (b.y - a.y) * prog);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+function frame(now) { requestAnimationFrame(frame); draw(now); }
+requestAnimationFrame(frame);
+
+/* ---- input: pointer ---- */
+function cellFromEvent(e) {
+  const r = cvs.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width * L;
+  const y = (e.clientY - r.top) / r.height * L;
+  const c = Math.floor((x - PAD) / CS), row = Math.floor((y - PAD) / CS);
+  if (c < 0 || c > 2 || row < 0 || row > 2) return -1;
+  return row * 3 + c;
+}
+cvs.addEventListener('pointerdown', (e) => {
+  ac();
+  if (state !== 'playing' || !humanTurn()) return;
+  const i = cellFromEvent(e);
+  if (i >= 0 && !board[i]) { cursor = i; doMove(i, turn); }
+});
+
+/* ---- input: keyboard ---- */
+window.addEventListener('keydown', (e) => {
+  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].indexOf(e.code) !== -1) e.preventDefault();
+  ac();
+  if (e.code === 'KeyM') { toggleMute(); return; }
+  if (e.code === 'Escape') { if (state !== 'menu') toMenu(); return; }
+  if (state === 'menu') {
+    if (e.code === 'Enter' || e.code === 'Space') startMatch();
+    else menuKeys(e.code);
+    return;
+  }
+  if (e.code === 'KeyR') { startMatch(); return; }
+  if (state === 'over') {
+    if (e.code === 'Enter' || e.code === 'Space') startMatch();
+    return;
+  }
+  if (state !== 'playing') return;
+  if (e.code === 'ArrowLeft')  cursor = cursor % 3 === 0 ? cursor + 2 : cursor - 1;
+  else if (e.code === 'ArrowRight') cursor = cursor % 3 === 2 ? cursor - 2 : cursor + 1;
+  else if (e.code === 'ArrowUp')   cursor = (cursor + 6) % 9;
+  else if (e.code === 'ArrowDown') cursor = (cursor + 3) % 9;
+  else if ((e.code === 'Enter' || e.code === 'Space') && humanTurn()) {
+    if (!board[cursor]) doMove(cursor, turn);
+  }
+});
+
+/* ---- menu (mouse + keyboard nav) ---- */
+const groups = [
+  { key: 'mode',  row: rowEls.mode,  vals: ['1p', '2p'],                     i: 0 },
+  { key: 'diff',  row: rowEls.diff,  vals: ['easy', 'medium', 'hard'],       i: 1 },
+  { key: 'first', row: rowEls.first, vals: ['you', 'cpu', 'flip'],           i: 0 }
+];
+let mCursor = 0;
+function refreshMenu() {
+  for (const g of groups) {
+    const chosen = g.vals[g.i];
+    for (const b of g.row.querySelectorAll('.opt'))
+      b.classList.toggle('sel', b.dataset.val === chosen);
+  }
+  Object.values(rowEls).forEach((r, ri) => r.classList.toggle('cursor', ri === mCursor));
+  const twoP = groups[0].vals[groups[0].i] === '2p';
+  rowEls.diff.classList.toggle('dim', twoP);
+  rowEls.first.classList.toggle('dim', twoP);
+}
+function menuKeys(code) {
+  const g = groups[mCursor];
+  if (code === 'ArrowUp')   mCursor = (mCursor + groups.length - 1) % groups.length;
+  else if (code === 'ArrowDown')  mCursor = (mCursor + 1) % groups.length;
+  else if (code === 'ArrowLeft')  g.i = (g.i + g.vals.length - 1) % g.vals.length;
+  else if (code === 'ArrowRight') g.i = (g.i + 1) % g.vals.length;
+  refreshMenu();
+}
+for (const b of document.querySelectorAll('.opt')) {
+  b.addEventListener('click', () => {
+    const g = groups.find(gr => gr.key === b.dataset.group);
+    g.i = g.vals.indexOf(b.dataset.val);
+    mCursor = groups.indexOf(g);
+    refreshMenu(); b.blur(); ac(); sfxClick();
+  });
+}
+function applyMenu() {
+  mode  = groups[0].vals[groups[0].i];
+  diff  = groups[1].vals[groups[1].i];
+  firstSel = groups[2].vals[groups[2].i];
+}
+startBtn.addEventListener('click', () => { startMatch(); startBtn.blur(); });
+resetBtn.addEventListener('click', () => {
+  scores = { x: 0, o: 0, d: 0 }; saveScores(); refreshHud();
+  resetBtn.blur(); ac(); sfxClick();
+});
+againBtn.addEventListener('click', () => { startMatch(); againBtn.blur(); });
+toMenuBtn.addEventListener('click', () => { toMenu(); toMenuBtn.blur(); });
+
+function toggleMute() {
+  muted = !muted;
+  muteBtn.innerHTML = muted ? '&#128263;' : '&#128266;';
+  muteBtn.blur();
+}
+muteBtn.addEventListener('click', toggleMute);
+
+/* ---- test hooks (getters only, never captured refs) ---- */
+window.__test = {
+  get board() { return board.slice(); },
+  get turn() { return turn; },
+  get state() { return state; },
+  get result() { return result; },
+  get difficulty() { return diff; },
+  get mode() { return mode; },
+  get scores() { return { x: scores.x, o: scores.o, d: scores.d }; },
+  bestMove: bestMove
+};
+
+/* ---- boot ---- */
+loadScores();
+refreshHud();
+toMenu();
+</script>
+</body>
+</html>

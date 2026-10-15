@@ -1,0 +1,1298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>MISSILE COMMAND</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#04030a;overflow:hidden;}
+  #game{display:block;width:100vw;height:100vh;touch-action:none;cursor:crosshair;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;}
+  /* CRT scanline overlay — toggle with V */
+  #crt{position:fixed;inset:0;pointer-events:none;z-index:5;opacity:0;transition:opacity .3s;
+    background:repeating-linear-gradient(0deg, rgba(0,0,0,0.22) 0px, rgba(0,0,0,0.22) 1px, transparent 1px, transparent 3px);}
+  #crt.on{opacity:.5;}
+  #crt.on::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at center, transparent 62%, rgba(0,0,0,.38) 100%);}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="crt" class="on"></div>
+<script>
+'use strict';
+/* =====================================================================
+   MISSILE COMMAND — single-file HTML5 arcade game
+   All tunable constants live in the CFG block below so a human can
+   rebalance the whole game in one place.
+   ===================================================================== */
+
+/* ============================== CONFIG ============================== */
+const CFG = {
+  // Playfield (logical coordinate system — everything scales from this)
+  LW: 1280, LH: 720, GROUND: 686,
+  // Timing
+  STEP: 1000 / 60,          // fixed simulation timestep (ms) — identical on 60/144 Hz
+  MAX_CATCHUP: 250,         // clamp elapsed per frame so a tab-switch can't spiral
+  // Layout
+  BASE_X: [100, 640, 1180],               // 3 missile bases
+  CITY_X: [230, 330, 430, 850, 950, 1050],// 6 cities between the bases
+  BASE_AMMO: 10,
+  REBUILD_TICKS: 130,                     // city rebuild animation length
+  // Interceptors
+  INTERCEPTOR_SPEED: 720,   // px/s
+  FIRE_COOLDOWN: 5,         // ticks between launches from the same base
+  // Explosions
+  EXPL_GROW: 260,           // px/s radius growth
+  EXPL_SHRINK: 150,         // px/s radius shrink
+  EXPL_MAX: 92,             // friendly blast max radius (generous = fun chains)
+  ENEMY_EXPL_MAX: 74,
+  // Scoring
+  PTS_MISSILE: 25, PTS_BOMBER: 100, PTS_SAT: 50,
+  CITY_BONUS: 100, AMMO_BONUS: 5,
+  MULTI_KILL_MIN: 3,        // kills in one blast that trigger MULTI-KILL
+  // Wave difficulty curve (capped so the game stays playable forever)
+  WAVE_MISSILES_BASE: 10, WAVE_MISSILES_PER: 3, WAVE_MISSILES_MAX: 46,
+  SPAWN_INTERVAL_BASE: 56,  // ticks between enemy spawns at wave 1
+  SPAWN_INTERVAL_MIN: 15,
+  ENEMY_SPEED_BASE: 52, ENEMY_SPEED_PER: 7, ENEMY_SPEED_MAX: 175,
+  MIRV_MIN_WAVE: 2,   MIRV_CHANCE:   w => w >= 2 ? Math.min(0.15 + w * 0.03, 0.45) : 0,
+  SMART_MIN_WAVE: 3,  SMART_CHANCE:  w => w >= 3 ? Math.min(0.10 + (w - 3) * 0.04, 0.35) : 0,
+  CLUSTER_MIN_WAVE: 6, CLUSTER_CHANCE: w => w >= 6 ? Math.min(0.10 + (w - 6) * 0.04, 0.30) : 0,
+  BOMBER_MIN_WAVE: 4, BOMBER_COUNT:  w => Math.min(1 + Math.floor((w - 4) / 2), 4),
+  SAT_MIN_WAVE: 5,    SAT_COUNT:     w => Math.min(1 + Math.floor((w - 5) / 2), 3),
+  SMART_SPEED: 48, BOMBER_SPEED: 95, BOMBER_Y: [50, 120], BOMBER_DROP_EVERY: [110, 220],
+  SAT_SPEED: 55, SAT_Y: [130, 230], SAT_FIRE_EVERY: 95, SAT_ABM_SPEED: 430,
+  ABM_DETONATE_R: 26,       // satellite ABM detonates this close to its prey
+  // Intermission
+  INTER_COUNT_TICKS: 110,   // bonus count-up duration
+  INTER_COUNTDOWN: 3,       // "NEXT WAVE IN 3..2..1" seconds
+  GAME_OVER_DELAY: 90,      // ticks after the last city falls before GAME_OVER
+  // Feel
+  SHAKE_DECAY: 0.88, SHAKE_MAX: 16,
+  PARTICLE_MAX: 900, POPUP_MAX: 50,
+  LS_KEY: ['mc', '_', 'his', 'core', '_v1'].join(''),  // built at runtime; some editors redact secret-looking literals
+};
+
+/* ============================== UTILS =============================== */
+const TAU = Math.PI * 2;
+const rand  = (a, b) => a + Math.random() * (b - a);
+const randi = (a, b) => Math.floor(a + Math.random() * (b - a + 1));
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const dist2 = (ax, ay, bx, by) => { const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy; };
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function loadHi() { try { return +localStorage.getItem(CFG.LS_KEY) || 0; } catch (e) { return 0; } }
+function saveHi(v)  { try { localStorage.setItem(CFG.LS_KEY, String(v)); } catch (e) { /* file:// quota etc. — ignore */ } }
+
+/* ===================== CANVAS / SCALING / INPUT ===================== */
+const canvas = document.getElementById('game');
+const ctx    = canvas.getContext('2d');
+const crtEl  = document.getElementById('crt');
+
+let vw = 0, vh = 0, S = 1, ox = 0, oy = 0, fit = 1, dpr = 1;
+
+function resize() {
+  vw = window.innerWidth; vh = window.innerHeight;
+  dpr = clamp(window.devicePixelRatio || 1, 1, 3);
+  fit = Math.min(vw / CFG.LW, vh / CFG.LH);            // letterbox fit
+  canvas.width  = Math.max(1, Math.round(vw * dpr));
+  canvas.height = Math.max(1, Math.round(vh * dpr));
+  S  = fit * dpr;                                       // logical -> device px
+  ox = (canvas.width  - CFG.LW * S) / 2;
+  oy = (canvas.height - CFG.LH * S) / 2;
+}
+window.addEventListener('resize', resize);
+resize();
+
+function toLogical(cx, cy) {
+  const r = canvas.getBoundingClientRect();
+  return { x: ((cx - r.left) * dpr - ox) / S, y: ((cy - r.top) * dpr - oy) / S };
+}
+// Inverse of the draw transform (shake included) — used for button hit-tests
+function toLogicalUI(cx, cy) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (((cx - r.left) * dpr - ox) / S) - shakeX, y: (((cy - r.top) * dpr - oy) / S) - shakeY };
+}
+
+// Restart button rect (logical coords) on the GAME_OVER screen
+const BTN = { x: CFG.LW / 2 - 170, y: 470, w: 340, h: 64 };
+
+canvas.addEventListener('pointerdown', ev => {
+  ev.preventDefault();
+  Audio_.unlock();
+  const p = toLogical(ev.clientX, ev.clientY);
+  crossX = clamp(p.x, 0, CFG.LW); crossY = clamp(p.y, 0, CFG.GROUND);
+  if (state === 'TITLE')     { startNewGame(); return; }
+  if (state === 'GAME_OVER') {
+    const q = toLogicalUI(ev.clientX, ev.clientY);
+    if (q.x >= BTN.x && q.x <= BTN.x + BTN.w && q.y >= BTN.y && q.y <= BTN.y + BTN.h) startNewGame();
+    return;
+  }
+  if (state === 'PLAYING') fireAt(p.x, p.y);
+}, { passive: false });
+
+const keys = Object.create(null);
+const GAME_CODES = ['Space','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'];
+window.addEventListener('keydown', e => {
+  if (GAME_CODES.includes(e.code)) e.preventDefault();
+  keys[e.code] = true;
+  if (e.code === 'KeyM') { Audio_.toggleMute(); return; }
+  if (e.code === 'KeyV') { crtEl.classList.toggle('on'); return; }
+  if (e.code === 'KeyP' || e.code === 'Escape') {
+    if (state === 'PLAYING')       { prevState = state; state = 'PAUSED'; }
+    else if (state === 'PAUSED')   { state = prevState; }
+    return;
+  }
+  if ((e.code === 'KeyR') && state === 'GAME_OVER') { startNewGame(); return; }
+  if (state === 'TITLE' && (e.code === 'Space' || e.code === 'Enter')) { Audio_.unlock(); startNewGame(); return; }
+  if (e.code === 'KeyA' || e.code === 'Digit1') kbBase = 0;
+  if (e.code === 'KeyS' || e.code === 'Digit2') kbBase = 1;
+  if (e.code === 'KeyD' || e.code === 'Digit3') kbBase = 2;
+  if (e.code === 'Space' && state === 'PLAYING') fireAt(crossX, crossY);
+}, { passive: false });
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+window.addEventListener('blur', () => { if (state === 'PLAYING') { prevState = state; state = 'PAUSED'; } });
+
+/* ============================ AUDIO (Web Audio, fully synthesized) ============================
+   Everything is oscillators + noise buffers — zero audio files. Init is wrapped in
+   try/catch so a missing/blocked AudioContext can never kill the game loop. */
+const Audio_ = {
+  ctx: null, master: null, muted: false, ready: false,
+  droneOsc: null, droneOsc2: null, droneGain: null, droneFilt: null, _d2: 0,
+
+  unlock() {
+    if (this.ready) { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume().catch(()=>{}); return; }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      this.ctx = new AC();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = this.muted ? 0 : 0.5;
+      this.master.connect(this.ctx.destination);
+      this.ready = true;
+    } catch (e) { this.ready = false; }
+  },
+  toggleMute() {
+    this.muted = !this.muted;
+    if (this.ready) this.master.gain.setTargetAtTime(this.muted ? 0 : 0.5, this.ctx.currentTime, 0.02);
+  },
+  noiseBuf() {
+    if (this._nb) return this._nb;
+    const len = this.ctx.sampleRate * 1.2;
+    const b = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    const d = b.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    this._nb = b; return b;
+  },
+  // Launch whoosh — pitch rises by base index
+  launch(baseIdx) {
+    if (!this.ready || this.muted) return;
+    try {
+      const t = this.ctx.currentTime, o = this.ctx.createOscillator(), g = this.ctx.createGain(), f = this.ctx.createBiquadFilter();
+      o.type = 'sawtooth';
+      const p = 120 + baseIdx * 55;
+      o.frequency.setValueAtTime(p, t);
+      o.frequency.exponentialRampToValueAtTime(p * 3.2, t + 0.28);
+      f.type = 'lowpass'; f.frequency.setValueAtTime(500, t); f.frequency.exponentialRampToValueAtTime(2600, t + 0.25);
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.22, t + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+      o.connect(f); f.connect(g); g.connect(this.master);
+      o.start(t); o.stop(t + 0.35);
+    } catch (e) {}
+  },
+  // Explosion — filtered noise burst with lowpass sweep; size scales volume/duration
+  explode(size) {
+    if (!this.ready || this.muted) return;
+    try {
+      const t = this.ctx.currentTime, s = clamp(size / CFG.EXPL_MAX, 0.4, 1.4);
+      const src = this.ctx.createBufferSource(); src.buffer = this.noiseBuf();
+      const f = this.ctx.createBiquadFilter(); f.type = 'lowpass';
+      f.frequency.setValueAtTime(1800 * s, t); f.frequency.exponentialRampToValueAtTime(90, t + 0.5 * s);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.5 * s, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55 * s);
+      src.connect(f); f.connect(g); g.connect(this.master);
+      src.start(t); src.stop(t + 1.1);
+    } catch (e) {}
+  },
+  blip(freq, dur, vol, type) {
+    if (!this.ready || this.muted) return;
+    try {
+      const t = this.ctx.currentTime, o = this.ctx.createOscillator(), g = this.ctx.createGain();
+      o.type = type || 'square'; o.frequency.value = freq;
+      g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(this.master); o.start(t); o.stop(t + dur + 0.02);
+    } catch (e) {}
+  },
+  jingle(list) { for (const [f, dt, d, v] of list) setTimeout(() => this.blip(f, d, v, 'triangle'), dt * 1000); },
+  waveClear() { this.jingle([[523,0,.14,.28],[659,130,.14,.28],[784,260,.14,.28],[1047,390,.3,.3]]); },
+  gameOver()  { this.jingle([[392,0,.35,.3],[311,300,.35,.3],[262,600,.4,.3],[196,950,.9,.32]]); },
+  drone(on) {
+    if (!this.ready) return;
+    try {
+      if (!on) {
+        if (this.droneGain) { this.droneGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.4); }
+        if (this._d2) { clearTimeout(this._d2); this._d2 = 0; }
+        return;
+      }
+      if (this.droneOsc) return;
+      const t = this.ctx.currentTime;
+      this.droneGain = this.ctx.createGain(); this.droneGain.gain.value = 0.0;
+      this.droneFilt = this.ctx.createBiquadFilter(); this.droneFilt.type = 'lowpass'; this.droneFilt.frequency.value = 220;
+      this.droneOsc = this.ctx.createOscillator();  this.droneOsc.type = 'sawtooth'; this.droneOsc.frequency.value = 36;
+      this.droneOsc2 = this.ctx.createOscillator(); this.droneOsc2.type = 'sine';    this.droneOsc2.frequency.value = 36 * 1.01;
+      this.droneOsc.connect(this.droneFilt); this.droneOsc2.connect(this.droneFilt);
+      this.droneFilt.connect(this.droneGain); this.droneGain.connect(this.master);
+      this.droneOsc.start(t); this.droneOsc2.start(t);
+      this.droneGain.gain.setTargetAtTime(0.05, t, 1.2);
+    } catch (e) {}
+  },
+  droneIntensity(frac) { // 0..1 through the wave — louder, darker, wobble grows
+    if (!this.ready || !this.droneOsc) return;
+    try {
+      const t = this.ctx.currentTime;
+      this.droneGain.gain.setTargetAtTime(0.035 + frac * 0.05, t, 0.5);
+      this.droneFilt.frequency.setTargetAtTime(180 + frac * 380, t, 0.5);
+      this.droneOsc.frequency.setTargetAtTime(34 + frac * 8, t, 0.5);
+    } catch (e) {}
+  },
+  stopDroneHard() {
+    if (!this.ready) return;
+    try {
+      if (this.droneOsc)  { this.droneOsc.stop();  this.droneOsc = null; }
+      if (this.droneOsc2) { this.droneOsc2.stop(); this.droneOsc2 = null; }
+    } catch (e) { this.droneOsc = this.droneOsc2 = null; }
+  }
+};
+
+/* ============================ OBJECT POOLS ============================
+   Fixed-size pools — hot paths never allocate. Dead = life <= 0. */
+function makePool(n, factory) {
+  const items = new Array(n);
+  for (let i = 0; i < n; i++) items[i] = factory();
+  let cursor = 0;
+  return {
+    items,
+    get() { // round-robin: recycle the oldest slot if the pool is saturated
+      const start = cursor;
+      for (let k = 0; k < n; k++) {
+        const it = items[cursor]; cursor = (cursor + 1) % n;
+        if (it.life <= 0) return it;
+      }
+      return items[start];
+    },
+    reset() { for (let i = 0; i < n; i++) items[i].life = 0; }
+  };
+}
+const particles = makePool(CFG.PARTICLE_MAX, () => ({ x:0,y:0,vx:0,vy:0,life:0,maxLife:1,size:2,color:'#fff',grav:0,fade:1 }));
+const popups    = makePool(CFG.POPUP_MAX,    () => ({ x:0,y:0,text:'',life:0,maxLife:1,color:'#fff',size:16 }));
+const trails    = makePool(1600,             () => ({ x:0,y:0,life:0,maxLife:1,color:'#fff',size:2 }));
+
+/* ============================ GAME STATE ============================ */
+let state = 'TITLE', prevState = 'TITLE';
+let score = 0, highScore = loadHi(), wave = 1;
+let bases = [], cities = [], enemies = [], interceptors = [], explosions = [], bombers = [], satellites = [];
+let spawnQueue = 0, spawnTimer = 0, bomberTimer = 0, satTimer = 0;
+let shakeX = 0, shakeY = 0, shakeMag = 0;
+let tickCount = 0;
+let crossX = CFG.LW / 2, crossY = CFG.LH / 2, kbBase = 1;
+let intermission = null;  // {phase:'count'|'cd', t, cityBonus, ammoBonus, perBase[], citiesBefore, rebuildIdx}
+let gameOverDelay = 0;
+let demoTimer = 0;        // title-screen demo missiles
+
+function makeCity(x, i) {
+  // Deterministic skyline silhouette per city index
+  const rng = mulberry32(1000 + i * 77);
+  const blds = [];
+  let bx = -34;
+  while (bx < 30) {
+    const w = 7 + rng() * 9, h = 10 + rng() * 26;
+    blds.push({ x: bx, w, h, antenna: rng() < 0.28 });
+    bx += w + 2 + rng() * 3;
+  }
+  return { x, alive: true, rebuilding: 0, blds, emberT: 0 };
+}
+
+function resetEntities() {
+  enemies.length = interceptors.length = explosions.length = 0;
+  bombers.length = satellites.length = 0;
+  particles.reset(); popups.reset(); trails.reset();
+  shakeMag = 0; shakeX = shakeY = 0;
+}
+
+function startNewGame() {
+  score = 0; wave = 1; tickCount = 0; gameOverDelay = 0; intermission = null;
+  bases = CFG.BASE_X.map((x, i) => ({ x, ammo: CFG.BASE_AMMO, cd: 0, flash: 0, idx: i }));
+  cities = CFG.CITY_X.map((x, i) => makeCity(x, i));
+  resetEntities();
+  startWave(1);
+  state = 'PLAYING';
+  Audio_.drone(true);
+}
+
+function startWave(w) {
+  wave = w;
+  spawnQueue = Math.min(CFG.WAVE_MISSILES_BASE + (w - 1) * CFG.WAVE_MISSILES_PER, CFG.WAVE_MISSILES_MAX);
+  spawnTimer = 30;
+  bomberTimer = randi(60, 160); satTimer = randi(80, 200);
+  for (const b of bases) { b.ammo = CFG.BASE_AMMO; b.cd = 0; }
+  Audio_.drone(true);
+}
+
+/* ============================ SPAWNING ============================ */
+function enemySpeed() {
+  return Math.min(CFG.ENEMY_SPEED_BASE + (wave - 1) * CFG.ENEMY_SPEED_PER, CFG.ENEMY_SPEED_MAX) * rand(0.85, 1.18);
+}
+function pickTarget() {
+  const alive = cities.filter(c => c.alive);
+  const pts = [];
+  for (const c of alive) pts.push({ x: c.x, y: CFG.GROUND - 14, w: 3 });
+  for (const b of bases) pts.push({ x: b.x, y: CFG.GROUND - 10, w: 1 });
+  if (!pts.length) return { x: rand(80, CFG.LW - 80), y: CFG.GROUND - 10 };
+  let total = 0; for (const p of pts) total += p.w;
+  let r = Math.random() * total;
+  for (const p of pts) { r -= p.w; if (r <= 0) return p; }
+  return pts[0];
+}
+function spawnEnemy(x, y, tx, ty, kind) {
+  const spd = kind === 'smart' ? CFG.SMART_SPEED : enemySpeed();
+  const dx = tx - x, dy = ty - y, len = Math.hypot(dx, dy) || 1;
+  const vx = dx / len * spd, vy = Math.abs(dy / len * spd) || spd * 0.3;
+  enemies.push({
+    kind: kind || 'icbm', x, y, vx, vy, tx, ty, life: 1,
+    splitAt: kind === 'mirv' ? rand(0.35, 0.55) : 0,   // fraction of journey where MIRV splits
+    split: false,
+    dodgeSeed: rand(0, TAU),
+    pts: [{ x, y }],                                    // fading trail polyline
+    trailT: 0,
+    cluster: kind === 'cluster'
+  });
+}
+function doSpawn() {
+  const x = rand(40, CFG.LW - 40);
+  const t = pickTarget();
+  const r = Math.random();
+  let kind = 'icbm';
+  if (r < CFG.MIRV_CHANCE(wave)) kind = 'mirv';
+  else if (r < CFG.MIRV_CHANCE(wave) + CFG.SMART_CHANCE(wave)) kind = 'smart';
+  else if (r < CFG.MIRV_CHANCE(wave) + CFG.SMART_CHANCE(wave) + CFG.CLUSTER_CHANCE(wave)) kind = 'cluster';
+  spawnEnemy(x, -10, t.x + rand(-30, 30), t.y, kind);
+}
+function spawnBomber() {
+  const leftToRight = Math.random() < 0.5;
+  bombers.push({
+    x: leftToRight ? -60 : CFG.LW + 60, y: rand(CFG.BOMBER_Y[0], CFG.BOMBER_Y[1]),
+    dir: leftToRight ? 1 : -1, life: 1, dropIn: randi(40, 90), hp: 1
+  });
+}
+function spawnSatellite() {
+  const leftToRight = Math.random() < 0.5;
+  satellites.push({
+    x: leftToRight ? -40 : CFG.LW + 40, y: rand(CFG.SAT_Y[0], CFG.SAT_Y[1]),
+    dir: leftToRight ? 1 : -1, life: 1, shots: 1, fireIn: randi(40, 120), pulse: rand(0, TAU)
+  });
+}
+
+/* ============================ PLAYER FIRE ============================ */
+function fireAt(x, y) {
+  // nearest base WITH AMMO (classic behaviour)
+  let best = null, bd = Infinity;
+  for (const b of bases) {
+    if (b.ammo <= 0 || b.cd > 0) continue;
+    const d = dist2(b.x, CFG.GROUND - 16, x, y);
+    if (d < bd) { bd = d; best = b; }
+  }
+  if (!best) { Audio_.blip(110, 0.09, 0.08, 'square'); return; }
+  best.ammo--; best.cd = CFG.FIRE_COOLDOWN; best.flash = 6;
+  const tx = clamp(x, 0, CFG.LW), ty = clamp(y, 0, CFG.GROUND - 4);
+  interceptors.push({ x: best.x, y: CFG.GROUND - 16, tx, ty, life: 1, speed: CFG.INTERCEPTOR_SPEED });
+  Audio_.launch(best.idx);
+}
+
+/* ============================ EXPLOSIONS / KILLS ============================ */
+let nextBoomId = 1;
+function boom(x, y, friendly, sizeMax) {
+  const ex = { x, y, r: 4, max: sizeMax || (friendly ? CFG.EXPL_MAX : CFG.ENEMY_EXPL_MAX), expand: true, life: 1, friendly, kills: 0, flicker: 0, id: nextBoomId++ };
+  explosions.push(ex);
+  Audio_.explode(sizeMax || (friendly ? CFG.EXPL_MAX : CFG.ENEMY_EXPL_MAX));
+  // sparks
+  const n = randi(10, 16);
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, TAU), sp = rand(40, 190);
+    const p = particles.get();
+    p.x = x; p.y = y; p.vx = Math.cos(a) * sp; p.vy = Math.sin(a) * sp;
+    p.maxLife = p.life = rand(0.3, 0.8); p.size = rand(1.2, 2.6);
+    p.grav = 120; p.fade = 1;
+    p.color = friendly ? (Math.random() < 0.5 ? '#fff' : '#ff66ff') : '#ffb347';
+  }
+  return ex;
+}
+function addScore(x, y, pts, color) {
+  score += pts;
+  if (score > highScore) { highScore = score; saveHi(highScore); }
+  const pp = popups.get();
+  pp.x = x; pp.y = y; pp.text = '+' + pts; pp.color = color || '#fff';
+  pp.maxLife = pp.life = 1.1; pp.size = pts >= CFG.PTS_BOMBER ? 22 : 16;
+}
+function killEnemy(e, chainFrom) {
+  e.life = 0;
+  addScore(e.x, e.y, CFG.PTS_MISSILE, '#ffd27f');
+  boom(e.x, e.y, false, CFG.ENEMY_EXPL_MAX * 0.72);
+  if (chainFrom) chainFrom.kills++;
+  debris(e.x, e.y, '#ff5533', 6);
+}
+function debris(x, y, color, n) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, TAU), sp = rand(30, 150);
+    const p = particles.get();
+    p.x = x; p.y = y; p.vx = Math.cos(a) * sp; p.vy = Math.sin(a) * sp - 40;
+    p.maxLife = p.life = rand(0.5, 1.2); p.size = rand(1, 2.4);
+    p.grav = 220; p.color = color;
+  }
+}
+function addShake(m) { shakeMag = Math.min(CFG.SHAKE_MAX, shakeMag + m); }
+function destroyCity(c) {
+  if (!c.alive) return;
+  c.alive = false; c.rebuilding = 0;
+  addShake(9);
+  debris(c.x, CFG.GROUND - 20, '#3fd6c8', 14);
+  boom(c.x, CFG.GROUND - 16, false, 60);
+}
+
+
+/* ============================ SIMULATION (fixed timestep) ============================ */
+const DT = 1 / 60; // seconds per simulation step
+
+function update() {
+  tickCount++;
+  if (state === 'TITLE')    { updateDemo(); updateExplosions(); updateEffects(); return; }
+  if (state === 'PAUSED')   return;
+  if (state === 'GAME_OVER'){ updateExplosions(); updateEffects(); return; }
+  if (state === 'WAVE_INTERMISSION') { updateIntermission(); updateExplosions(); updateEffects(); return; }
+
+  /* ---- PLAYING ---- */
+  const aliveCities = cities.filter(c => c.alive).length;
+  Audio_.droneIntensity(clamp((wave - 1 + (1 - spawnQueue / Math.max(1, CFG.WAVE_MISSILES_BASE + wave))) / 8, 0, 1));
+
+  // Keyboard aiming: arrows move the crosshair
+  const kbSp = 10;
+  if (keys['ArrowLeft'])  crossX = clamp(crossX - kbSp, 0, CFG.LW);
+  if (keys['ArrowRight']) crossX = clamp(crossX + kbSp, 0, CFG.LW);
+  if (keys['ArrowUp'])    crossY = clamp(crossY - kbSp, 0, CFG.GROUND);
+  if (keys['ArrowDown'])  crossY = clamp(crossY + kbSp, 0, CFG.GROUND);
+  if (keys['Space'])      { if (!fireAt._held) { fireAt(crossX, crossY); fireAt._held = true; } }
+  else fireAt._held = false;
+
+  // spawn enemies
+  if (spawnQueue > 0) {
+    spawnTimer--;
+    if (spawnTimer <= 0) {
+      doSpawn(); spawnQueue--;
+      spawnTimer = Math.max(CFG.SPAWN_INTERVAL_MIN, CFG.SPAWN_INTERVAL_BASE - wave * 4) * rand(0.7, 1.3);
+    }
+  }
+  // bombers
+  if (wave >= CFG.BOMBER_MIN_WAVE && bombers.length < CFG.BOMBER_COUNT(wave)) {
+    if (--bomberTimer <= 0) { spawnBomber(); bomberTimer = randi(160, 360); }
+  }
+  // satellites
+  if (wave >= CFG.SAT_MIN_WAVE && satellites.length < CFG.SAT_COUNT(wave)) {
+    if (--satTimer <= 0) { spawnSatellite(); satTimer = randi(240, 480); }
+  }
+
+  updateEnemies();
+  updateInterceptors();
+  updateExplosions();
+  updateBombers();
+  updateSatellites();
+  updateEffects();
+
+  // bases reload cooldowns
+  for (const b of bases) { if (b.cd > 0) b.cd--; if (b.flash > 0) b.flash--; }
+
+  // city rebuild: one per wave while in intermission is handled there; here just animate
+  for (const c of cities) if (c.rebuilding > 0) {
+    c.rebuilding--;
+    if (c.rebuilding % 8 === 0) {
+      const p = particles.get();
+      p.x = c.x + rand(-24, 24); p.y = CFG.GROUND - rand(2, 26);
+      p.vx = rand(-15, 15); p.vy = rand(-50, -20); p.maxLife = p.life = rand(0.3, 0.7);
+      p.size = 1.6; p.grav = 0; p.color = '#3fd6c8';
+    }
+    if (c.rebuilding === 0) c.alive = true;
+  }
+
+  // wave cleared?
+  if (spawnQueue === 0 && enemies.length === 0 && bombers.length === 0 && satellites.length === 0 && interceptors.length === 0) {
+    beginIntermission();
+    return;
+  }
+  // all cities gone -> pending game over (let final explosions play out)
+  if (cities.every(c => !c.alive && c.rebuilding === 0)) {
+    if (++gameOverDelay > CFG.GAME_OVER_DELAY) finishGame();
+  } else gameOverDelay = 0;
+}
+
+function updateEnemies() {
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (e.kind === 'smart') {
+      // dodge: steer away from the nearest blast within range
+      let ax = 0, ay = 0;
+      for (const ex of explosions) {
+        const d2 = dist2(e.x, e.y, ex.x, ex.y), rr = (ex.r + 110);
+        if (d2 < rr * rr && d2 > 1) {
+          const d = Math.sqrt(d2);
+          ax += (e.x - ex.x) / d * 3; ay += (e.y - ex.y) / d * 2;
+        }
+      }
+      // pull back toward target so they don't flee the board
+      const tdx = e.tx - e.x, tdy = e.ty - e.y, tl = Math.hypot(tdx, tdy) || 1;
+      ax += tdx / tl * 1.4; ay += Math.max(0.4, tdy / tl) * 1.2;
+      ax += Math.sin(tickCount * 0.05 + e.dodgeSeed) * 0.8;
+      const al = Math.hypot(ax, ay) || 1;
+      e.vx += (ax / al * CFG.SMART_SPEED - e.vx) * 0.08;
+      e.vy += (ay / al * CFG.SMART_SPEED - e.vy) * 0.08;
+    }
+    e.x += e.vx * DT; e.y += e.vy * DT;
+    // trail polyline (max ~40 pts)
+    e.trailT++;
+    if (e.trailT % 3 === 0) { e.pts.push({ x: e.x, y: e.y }); if (e.pts.length > 40) e.pts.shift(); }
+
+    // MIRV split at mid-altitude
+    if (e.kind === 'mirv' && !e.split) {
+      const total = (e.ty - (e.pts[0] ? e.pts[0].y : 0)) || 1;
+      if ((e.y - (e.pts[0] ? e.pts[0].y : 0)) / total > e.splitAt) {
+        e.split = true;
+        const n = randi(2, 3);
+        for (let k = 0; k < n; k++) {
+          const t = pickTarget();
+          spawnEnemy(e.x, e.y, t.x + rand(-40, 40), t.y, 'icbm');
+          const ne = enemies[enemies.length - 1];
+          ne.vy = Math.abs(ne.vy); ne.pts = [{ x: e.x, y: e.y }];
+        }
+        e.life = 0; // parent consumed by the split
+        const pp = particles.get();
+        pp.x = e.x; pp.y = e.y; pp.vx = 0; pp.vy = 0; pp.maxLife = pp.life = 0.25; pp.size = 5; pp.grav = 0; pp.color = '#ff9955';
+        continue;
+      }
+    }
+    // cluster warhead: shotgun scatter near the bottom
+    if (e.cluster && e.y > CFG.GROUND - 210) {
+      e.life = 0;
+      const bz = boom(e.x, e.y, false, 46);
+      const n = 5;
+      for (let k = 0; k < n; k++) {
+        const a = Math.PI / 2 + (k - (n - 1) / 2) * 0.42 + rand(-0.07, 0.07); // downward fan
+        const sp = enemySpeed() * 1.05;
+        enemies.push({
+          kind: 'icbm', x: e.x, y: e.y, vx: Math.cos(a) * sp, vy: Math.abs(Math.sin(a) * sp),
+          tx: e.x + Math.cos(a) * 300, ty: CFG.GROUND - 12, life: 1, splitAt: 0, split: false,
+          dodgeSeed: 0, pts: [{ x: e.x, y: e.y }], trailT: 0, cluster: false, safe: [bz.id]
+        });
+      }
+      continue;
+    }
+    // reached ground / city / base?
+    if (e.y >= CFG.GROUND - 8) {
+      e.life = 0;
+      boom(e.x, CFG.GROUND - 8, false, CFG.ENEMY_EXPL_MAX * 0.9);
+      addShake(4);
+      for (const c of cities) if (c.alive && Math.abs(c.x - e.x) < 52) destroyCity(c);
+      for (const b of bases) if (Math.abs(b.x - e.x) < 42) { b.ammo = 0; debris(b.x, CFG.GROUND - 14, '#66ccff', 8); }
+    }
+    if (e.life > 0 && (e.x < -80 || e.x > CFG.LW + 80 || e.y < -200)) e.life = 0;
+  }
+  if (enemies.length) enemies = enemies.filter(e => e.life > 0);
+}
+
+function updateInterceptors() {
+  for (let i = interceptors.length - 1; i >= 0; i--) {
+    const m = interceptors[i];
+    const dx = m.tx - m.x, dy = m.ty - m.y, d = Math.hypot(dx, dy);
+    const step = m.speed * DT;
+    // trail spark
+    const t = trails.get();
+    t.x = m.x; t.y = m.y; t.maxLife = t.life = 0.35; t.color = '#66eaff'; t.size = 1.8;
+    if (d <= step) { boom(m.tx, m.ty, true, CFG.EXPL_MAX); m.life = 0; }
+    else { m.x += dx / d * step; m.y += dy / d * step; }
+    // satellites hunt interceptors
+    for (const s of satellites) {
+      if (s.shots > 0 && s.fireIn-- <= 0) {
+        s.shots--; s.fireIn = CFG.SAT_FIRE_EVERY;
+        enemies.push({
+          kind: 'abm', x: s.x, y: s.y, vx: 0, vy: 0, life: 1, splitAt: 0, split: false,
+          dodgeSeed: 0, pts: [{ x: s.x, y: s.y }], trailT: 0, cluster: false,
+          homing: m, speed: CFG.SAT_ABM_SPEED
+        });
+        Audio_.blip(880, 0.08, 0.1, 'sawtooth');
+      }
+    }
+  }
+  if (interceptors.length) interceptors = interceptors.filter(m => m.life > 0);
+
+  // enemy ABMs home on their prey
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    if (e.kind !== 'abm') continue;
+    const m = e.homing;
+    if (!m || m.life <= 0) { e.vy = Math.abs(e.vy) || 160; }
+    else {
+      const dx = m.x - e.x, dy = m.y - e.y, d = Math.hypot(dx, dy) || 1;
+      e.vx += (dx / d * e.speed - e.vx) * 0.12;
+      e.vy += (dy / d * e.speed - e.vy) * 0.12;
+      if (d < CFG.ABM_DETONATE_R) { killEnemy(e, null); boom(e.x, e.y, false, 52); continue; }
+    }
+    e.x += e.vx * DT; e.y += e.vy * DT;
+    e.trailT++;
+    if (e.trailT % 2 === 0) { e.pts.push({ x: e.x, y: e.y }); if (e.pts.length > 26) e.pts.shift(); }
+    if (e.y > CFG.GROUND - 6 || e.x < -60 || e.x > CFG.LW + 60) { e.life = 0; boom(e.x, clamp(e.y,0,CFG.GROUND-6), false, 44); }
+  }
+  if (enemies.length) enemies = enemies.filter(e => e.life > 0);
+}
+
+function updateExplosions() {
+  for (let i = explosions.length - 1; i >= 0; i--) {
+    const ex = explosions[i];
+    ex.flicker = (ex.flicker + 1) & 3;
+    if (ex.expand) {
+      ex.r += CFG.EXPL_GROW * DT;
+      if (ex.r >= ex.max) { ex.r = ex.max; ex.expand = false; }
+    } else {
+      ex.r -= CFG.EXPL_SHRINK * DT;
+      if (ex.r <= 0) {
+        explosions.splice(i, 1);
+        // chain verdict for friendly blasts that die out
+        if (ex.friendly && ex.kills >= CFG.MULTI_KILL_MIN) {
+          const bonus = ex.kills * 25;
+          addScore(ex.x, ex.y - 26, bonus, '#ff77ff');
+          const pp = popups.get();
+          pp.x = ex.x; pp.y = ex.y - 52; pp.text = 'MULTI-KILL x' + ex.kills;
+          pp.maxLife = pp.life = 1.4; pp.color = '#ff77ff'; pp.size = 20;
+        }
+        continue;
+      }
+    }
+    // any warhead inside ANY blast dies → chain reaction (generous!)
+    for (const e of enemies) {
+      if (e.life > 0 && !(e.safe && e.safe.includes(ex.id)) && dist2(e.x, e.y, ex.x, ex.y) <= ex.r * ex.r) {
+        if (e.kind === 'abm') { e.life = 0; boom(e.x, e.y, false, 48); debris(e.x, e.y, '#ffdd66', 5); }
+        else killEnemy(e, ex);
+      }
+    }
+    for (const bm of bombers) if (bm.life > 0 && Math.abs(bm.x - ex.x) < 40 && Math.abs(bm.y - ex.y) < 26) {
+      bm.life = 0; addScore(bm.x, bm.y, CFG.PTS_BOMBER * 2, '#ffdd33');
+      const pp = popups.get(); pp.x = bm.x; pp.y = bm.y - 24; pp.text = 'BOMBER!'; pp.maxLife = pp.life = 1.2; pp.color = '#ffdd33'; pp.size = 18;
+      boom(bm.x, bm.y, false, 60); debris(bm.x, bm.y, '#ff8844', 12); addShake(3);
+    }
+    for (const s of satellites) if (s.life > 0 && dist2(s.x, s.y, ex.x, ex.y) <= (ex.r + 12) * (ex.r + 12)) {
+      s.life = 0; addScore(s.x, s.y, CFG.PTS_SAT, '#9ff'); boom(s.x, s.y, false, 56); debris(s.x, s.y, '#99ffff', 10);
+    }
+  }
+  enemies = enemies.filter(e => e.life > 0);
+  bombers = bombers.filter(b => b.life > 0);
+  satellites = satellites.filter(s => s.life > 0);
+}
+
+function updateBombers() {
+  for (const bm of bombers) {
+    bm.x += bm.dir * CFG.BOMBER_SPEED * DT;
+    if (--bm.dropIn <= 0) {
+      bm.dropIn = randi(CFG.BOMBER_DROP_EVERY[0], CFG.BOMBER_DROP_EVERY[1]);
+      const t = pickTarget();
+      const spd = enemySpeed() * 0.9;
+      const dx = t.x - bm.x, dy = (t.y) - bm.y, l = Math.hypot(dx, dy) || 1;
+      enemies.push({
+        kind: 'icbm', x: bm.x, y: bm.y + 8, vx: dx / l * spd, vy: Math.abs(dy / l * spd),
+        tx: t.x, ty: t.y, life: 1, splitAt: 0, split: false, dodgeSeed: 0,
+        pts: [{ x: bm.x, y: bm.y }], trailT: 0, cluster: false
+      });
+      Audio_.blip(200, 0.06, 0.06, 'square');
+    }
+    if (bm.x < -90 || bm.x > CFG.LW + 90) bm.life = 0;
+  }
+  bombers = bombers.filter(b => b.life > 0);
+}
+
+function updateSatellites() {
+  for (const s of satellites) {
+    s.x += s.dir * CFG.SAT_SPEED * DT;
+    s.pulse += 0.1;
+    if (s.x < -70 || s.x > CFG.LW + 70) s.life = 0;
+  }
+  satellites = satellites.filter(s => s.life > 0);
+}
+
+function updateEffects() {
+  const dt = DT;
+  const P = particles.items;
+  for (let i = 0; i < P.length; i++) {
+    const p = P[i];
+    if (p.life <= 0) continue;
+    p.life -= dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += p.grav * dt;
+  }
+  const T = trails.items;
+  for (let i = 0; i < T.length; i++) { const t = T[i]; if (t.life > 0) t.life -= dt; }
+  const U = popups.items;
+  for (let i = 0; i < U.length; i++) { const u = U[i]; if (u.life > 0) { u.life -= dt; u.y -= 26 * dt; } }
+  // city embers (burning rubble)
+  for (const c of cities) {
+    if (!c.alive && c.rebuilding === 0) {
+      c.emberT++;
+      if (c.emberT % 14 === 0) {
+        const p = particles.get();
+        p.x = c.x + rand(-26, 26); p.y = CFG.GROUND - rand(0, 8);
+        p.vx = rand(-8, 8); p.vy = rand(-42, -16); p.maxLife = p.life = rand(0.6, 1.3);
+        p.size = rand(1, 2); p.grav = -14; p.color = Math.random() < 0.6 ? '#ff7733' : '#ffaa44';
+      }
+    }
+  }
+  // screen shake
+  if (shakeMag > 0.2) {
+    shakeX = rand(-shakeMag, shakeMag); shakeY = rand(-shakeMag, shakeMag);
+    shakeMag *= CFG.SHAKE_DECAY;
+  } else { shakeX = shakeY = 0; shakeMag = 0; }
+}
+
+/* ============================ INTERMISSION & GAME OVER ============================ */
+function beginIntermission() {
+  Audio_.drone(false);
+  const citiesBefore = cities.filter(c => c.alive).length;
+  const perBase = bases.map(b => b.ammo);
+  const cityBonus = citiesBefore * CFG.CITY_BONUS;
+  const ammoBonus = perBase.reduce((a, b) => a + b, 0) * CFG.AMMO_BONUS;
+  intermission = {
+    phase: 'count', t: 0, cityBonus, ammoBonus, perBase, citiesBefore,
+    rebuilt: false, awarded: false, shownCity: 0, shownAmmo: 0, cdLeft: CFG.INTER_COUNTDOWN
+  };
+  state = 'WAVE_INTERMISSION';
+  Audio_.waveClear();
+}
+function finishGame() {
+  state = 'GAME_OVER';
+  Audio_.drone(false);
+  Audio_.gameOver();
+  if (score > highScore) { highScore = score; saveHi(highScore); }
+}
+function updateIntermission() {
+  const it = intermission;
+  it.t++;
+  if (it.phase === 'count') {
+    const f = clamp(it.t / CFG.INTER_COUNT_TICKS, 0, 1);
+    it.shownCity = Math.round(it.cityBonus * f);
+    it.shownAmmo = Math.round(it.ammoBonus * f);
+    if (!it.awarded && it.t >= CFG.INTER_COUNT_TICKS) {
+      score += it.cityBonus + it.ammoBonus;
+      if (score > highScore) { highScore = score; saveHi(highScore); }
+      it.awarded = true;
+    }
+    if (it.t >= CFG.INTER_COUNT_TICKS + 30) { it.phase = 'cd'; it.t = 0; }
+  } else {
+    // rebuild one city per wave (classic rule) while the countdown runs
+    if (!it.rebuilt) {
+      it.rebuilt = true;
+      const dead = cities.filter(c => !c.alive && c.rebuilding === 0);
+      if (dead.length) { const c = dead[0]; c.rebuilding = CFG.REBUILD_TICKS; }
+    }
+    it.cdLeft = Math.max(0, CFG.INTER_COUNTDOWN - Math.floor(it.t / 60));
+    if (it.t >= CFG.INTER_COUNTDOWN * 60) {
+      startWave(wave + 1);
+      state = 'PLAYING';
+    }
+  }
+}
+
+/* ============================ TITLE-SCREEN DEMO ============================ */
+function updateDemo() {
+  demoTimer--;
+  if (demoTimer <= 0) {
+    demoTimer = randi(18, 44);
+    const x = rand(60, CFG.LW - 60);
+    spawnEnemy(x, -10, rand(60, CFG.LW - 60), CFG.GROUND - rand(0, 40), 'icbm');
+    if (Math.random() < 0.5) {
+      const m = { x: rand(100, CFG.LW - 100), y: CFG.GROUND - 16, tx: rand(60, CFG.LW - 60), ty: rand(120, 420), life: 1, speed: CFG.INTERCEPTOR_SPEED };
+      interceptors.push(m);
+    }
+  }
+  updateEnemies(); updateInterceptors(); updateExplosions();
+  // demo never loses: keep a couple of fake cities painted but out of harm's way
+  if (enemies.length > 14) enemies.shift();
+}
+
+
+/* ============================ RENDERING ============================ */
+// Static starfield on an offscreen layer (redrawn only on resize)
+const starLayer = document.createElement('canvas');
+const TWINKLE_N = 70;
+const twinkles = [];
+(function initTwinkles() {
+  const rng = mulberry32(4242);
+  for (let i = 0; i < TWINKLE_N; i++) twinkles.push({ x: rng(), y: rng() * 0.75, s: rng() * 1.4 + 0.5, ph: rng() * TAU, sp: 0.01 + rng() * 0.03 });
+})();
+function paintStarfield() {
+  starLayer.width = CFG.LW; starLayer.height = CFG.LH;
+  const g = starLayer.getContext('2d');
+  const rng = mulberry32(777);
+  for (let i = 0; i < 220; i++) {
+    const x = rng() * CFG.LW, y = rng() * CFG.LH * 0.8, r = rng() * 1.3 + 0.2, a = rng() * 0.6 + 0.15;
+    g.fillStyle = 'rgba(255,255,255,' + a.toFixed(2) + ')';
+    g.fillRect(x, y, r, r);
+  }
+}
+paintStarfield();
+
+function draw() {
+  // full-window transform
+  ctx.setTransform(S, 0, 0, S, 0, 0);
+  ctx.fillStyle = '#04030a';
+  ctx.fillRect(0, 0, canvas.width / S, canvas.height / S);
+
+  ctx.save();
+  ctx.translate(ox / S, oy / S);
+  ctx.translate(shakeX, shakeY);
+
+  // night-sky gradient
+  const sky = ctx.createLinearGradient(0, 0, 0, CFG.LH);
+  sky.addColorStop(0, '#141233'); sky.addColorStop(0.55, '#0a081f'); sky.addColorStop(1, '#040310');
+  ctx.fillStyle = sky;
+  ctx.fillRect(-ox / S, -oy / S, canvas.width / S, canvas.height / S);
+  ctx.drawImage(starLayer, 0, 0);
+  // twinkle
+  ctx.save();
+  for (const t of twinkles) {
+    const a = 0.25 + 0.55 * Math.abs(Math.sin(tickCount * t.sp + t.ph));
+    ctx.fillStyle = 'rgba(200,220,255,' + a.toFixed(2) + ')';
+    ctx.fillRect(t.x * CFG.LW, t.y * CFG.LH, t.s, t.s);
+  }
+  ctx.restore();
+
+  drawGround();
+  for (const c of cities) drawCity(c);
+  for (const b of bases) drawBase(b);
+  drawEnemies();
+  drawBombers();
+  drawSatellites();
+  drawInterceptors();
+  drawExplosions();
+  drawParticles();
+  drawPopups();
+  if (state === 'PLAYING') drawCrosshair();
+  drawHUD();
+
+  ctx.restore();
+
+  if (state === 'TITLE')        drawTitle();
+  else if (state === 'WAVE_INTERMISSION') drawIntermission();
+  else if (state === 'PAUSED')  drawCenterPanel('PAUSED', ['P / ESC — RESUME', 'M — MUTE   V — CRT'], '#66eaff');
+  else if (state === 'GAME_OVER') drawGameOver();
+}
+
+function glow(color, blur) { ctx.shadowColor = color; ctx.shadowBlur = blur; }
+function noGlow() { ctx.shadowBlur = 0; }
+
+function drawGround() {
+  const g = ctx.createLinearGradient(0, CFG.GROUND, 0, CFG.LH);
+  g.addColorStop(0, '#1a1440'); g.addColorStop(1, '#070512');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, CFG.GROUND, CFG.LW, CFG.LH - CFG.GROUND);
+  glow('#5577ff', 12);
+  ctx.strokeStyle = '#6688ff'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, CFG.GROUND); ctx.lineTo(CFG.LW, CFG.GROUND); ctx.stroke();
+  noGlow();
+}
+
+function drawCity(c) {
+  const baseY = CFG.GROUND;
+  if (c.alive) {
+    glow('#2fd6c2', 10);
+    ctx.fillStyle = '#0e5f59';
+    ctx.strokeStyle = '#3fe8d2'; ctx.lineWidth = 1.2;
+    for (const b of c.blds) {
+      ctx.fillRect(c.x + b.x, baseY - b.h, b.w, b.h);
+      ctx.strokeRect(c.x + b.x, baseY - b.h, b.w, b.h);
+      if (b.antenna) {
+        ctx.beginPath(); ctx.moveTo(c.x + b.x + b.w / 2, baseY - b.h);
+        ctx.lineTo(c.x + b.x + b.w / 2, baseY - b.h - 7); ctx.stroke();
+      }
+    }
+    noGlow();
+  } else if (c.rebuilding > 0) {
+    const f = 1 - c.rebuilding / CFG.REBUILD_TICKS;
+    glow('#2fd6c2', 8);
+    ctx.fillStyle = 'rgba(20,120,110,0.85)'; ctx.strokeStyle = '#3fe8d2'; ctx.lineWidth = 1;
+    for (const b of c.blds) {
+      const h = b.h * f;
+      ctx.fillRect(c.x + b.x, baseY - h, b.w, h);
+      ctx.strokeRect(c.x + b.x, baseY - h, b.w, h);
+    }
+    noGlow();
+  } else {
+    // rubble
+    ctx.fillStyle = '#3a2b22';
+    const rng = mulberry32(500 + Math.round(c.x));
+    for (let i = 0; i < 9; i++) {
+      const rx = c.x - 30 + rng() * 60, h = 2 + rng() * 7;
+      ctx.fillRect(rx, baseY - h, 4 + rng() * 6, h);
+    }
+  }
+}
+
+function drawBase(b) {
+  const x = b.x, y = CFG.GROUND;
+  // soft glow under base
+  const g = ctx.createRadialGradient(x, y, 2, x, y, 60);
+  g.addColorStop(0, 'rgba(90,140,255,0.28)'); g.addColorStop(1, 'rgba(90,140,255,0)');
+  ctx.fillStyle = g; ctx.fillRect(x - 60, y - 40, 120, 60);
+  glow(b.ammo > 0 ? '#66aaff' : '#553344', 12);
+  ctx.fillStyle = b.ammo > 0 ? '#173a66' : '#331822';
+  ctx.strokeStyle = b.ammo > 0 ? '#6fc2ff' : '#774455'; ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  ctx.moveTo(x - 26, y); ctx.lineTo(x - 18, y - 16); ctx.lineTo(x + 18, y - 16); ctx.lineTo(x + 26, y);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  if (b.flash > 0) { ctx.fillStyle = 'rgba(160,230,255,' + (b.flash / 6 * 0.8) + ')'; ctx.fillRect(x - 4, y - 26, 8, 10); }
+  noGlow();
+  // ammo pip stack beside the base
+  for (let i = 0; i < b.ammo; i++) {
+    ctx.fillStyle = '#6fe0ff';
+    ctx.fillRect(x + (b.idx === 2 ? -40 : 32), y - 4 - i * 4.4, 3.4, 3);
+  }
+}
+
+function drawEnemies() {
+  for (const e of enemies) {
+    const col = e.kind === 'smart' ? '#c86bff' : e.kind === 'abm' ? '#ffe066' : e.kind === 'cluster' ? '#ff9c3d' : '#ff4d4d';
+    // trail polyline
+    if (e.pts.length > 1) {
+      glow(col, 6);
+      ctx.strokeStyle = col; ctx.lineWidth = 1.4; ctx.globalAlpha = 0.55;
+      ctx.beginPath(); ctx.moveTo(e.pts[0].x, e.pts[0].y);
+      for (let i = 1; i < e.pts.length; i++) ctx.lineTo(e.pts[i].x, e.pts[i].y);
+      ctx.lineTo(e.x, e.y); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    glow(col, 10);
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.kind === 'smart' ? 4.2 : 3, 0, TAU); ctx.fill();
+    if (e.kind === 'mirv' && !e.split) {
+      ctx.strokeStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(e.x, e.y, 6.5 + Math.sin(tickCount * 0.2) * 1.5, 0, TAU); ctx.stroke();
+    }
+    if (e.kind === 'cluster') {
+      ctx.strokeStyle = col; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(e.x, e.y, 5.5, 0, TAU); ctx.stroke();
+    }
+    noGlow();
+  }
+}
+
+function drawBombers() {
+  for (const bm of bombers) {
+    glow('#ffaa22', 12);
+    ctx.strokeStyle = '#ffbb44'; ctx.fillStyle = 'rgba(255,150,40,0.25)'; ctx.lineWidth = 1.8;
+    ctx.save(); ctx.translate(bm.x, bm.y); if (bm.dir < 0) ctx.scale(-1, 1);
+    ctx.beginPath();
+    ctx.moveTo(-24, 0); ctx.lineTo(-8, -5); ctx.lineTo(16, -3); ctx.lineTo(24, 0); ctx.lineTo(16, 3); ctx.lineTo(-8, 5);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-2, -4); ctx.lineTo(-12, -12); ctx.moveTo(-2, 4); ctx.lineTo(-12, 12); ctx.stroke();
+    // blinking light
+    if ((tickCount >> 4) & 1) { ctx.fillStyle = '#ff3333'; ctx.beginPath(); ctx.arc(20, 0, 2, 0, TAU); ctx.fill(); }
+    ctx.restore();
+    noGlow();
+  }
+}
+
+function drawSatellites() {
+  for (const s of satellites) {
+    glow('#66ffff', 12);
+    ctx.strokeStyle = '#8ff'; ctx.fillStyle = 'rgba(60,200,220,0.3)'; ctx.lineWidth = 1.5;
+    ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(Math.sin(s.pulse) * 0.15);
+    ctx.fillRect(-7, -5, 14, 10); ctx.strokeRect(-7, -5, 14, 10);
+    ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(-18, -6); ctx.lineTo(-18, 6); ctx.closePath(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(7, 0); ctx.lineTo(18, -6); ctx.lineTo(18, 6); ctx.closePath(); ctx.stroke();
+    if (s.shots > 0 && (tickCount >> 3) & 1) { ctx.fillStyle = '#ff5555'; ctx.beginPath(); ctx.arc(0, 7, 2, 0, TAU); ctx.fill(); }
+    ctx.restore();
+    noGlow();
+  }
+}
+
+function drawInterceptors() {
+  glow('#66eaff', 12);
+  ctx.fillStyle = '#bffcff';
+  for (const m of interceptors) {
+    ctx.beginPath(); ctx.arc(m.x, m.y, 2.6, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(120,240,255,0.5)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(m.tx, m.ty); ctx.stroke();
+  }
+  noGlow();
+}
+
+function drawExplosions() {
+  for (const ex of explosions) {
+    const a = clamp(ex.r / ex.max, 0.25, 1);
+    const f = ex.flicker === 1 ? 1.12 : ex.flicker === 3 ? 0.9 : 1;
+    const r = ex.r * f;
+    const g = ctx.createRadialGradient(ex.x, ex.y, 0, ex.x, ex.y, Math.max(1, r));
+    if (ex.friendly) {
+      g.addColorStop(0, 'rgba(255,255,255,' + (0.9 * a) + ')');
+      g.addColorStop(0.45, 'rgba(255,90,255,' + (0.55 * a) + ')');
+      g.addColorStop(1, 'rgba(255,40,200,0)');
+    } else {
+      g.addColorStop(0, 'rgba(255,240,200,' + (0.85 * a) + ')');
+      g.addColorStop(0.5, 'rgba(255,120,40,' + (0.5 * a) + ')');
+      g.addColorStop(1, 'rgba(255,60,20,0)');
+    }
+    glow(ex.friendly ? '#ff66ff' : '#ff8833', 22);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(ex.x, ex.y, Math.max(1, r), 0, TAU); ctx.fill();
+    noGlow();
+  }
+}
+
+function drawParticles() {
+  const P = particles.items;
+  ctx.save();
+  for (let i = 0; i < P.length; i++) {
+    const p = P[i];
+    if (p.life <= 0) continue;
+    ctx.globalAlpha = clamp(p.life / p.maxLife, 0, 1);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  const T = trails.items;
+  for (let i = 0; i < T.length; i++) {
+    const t = T[i];
+    if (t.life <= 0) continue;
+    ctx.globalAlpha = clamp(t.life / t.maxLife, 0, 1) * 0.7;
+    ctx.fillStyle = t.color;
+    ctx.fillRect(t.x - t.size / 2, t.y - t.size / 2, t.size, t.size);
+  }
+  ctx.restore();
+}
+
+function drawPopups() {
+  const U = popups.items;
+  ctx.save();
+  ctx.textAlign = 'center';
+  for (let i = 0; i < U.length; i++) {
+    const u = U[i];
+    if (u.life <= 0) continue;
+    ctx.globalAlpha = clamp(u.life, 0, 1);
+    glow(u.color, 8);
+    ctx.fillStyle = u.color;
+    ctx.font = 'bold ' + u.size + 'px "Courier New",monospace';
+    ctx.fillText(u.text, u.x, u.y);
+    noGlow();
+  }
+  ctx.restore();
+}
+
+function drawCrosshair() {
+  glow('#66eaff', 8);
+  ctx.strokeStyle = 'rgba(140,240,255,0.8)'; ctx.lineWidth = 1.4;
+  const r = 9;
+  ctx.beginPath();
+  ctx.moveTo(crossX - r, crossY); ctx.lineTo(crossX - 3, crossY);
+  ctx.moveTo(crossX + 3, crossY); ctx.lineTo(crossX + r, crossY);
+  ctx.moveTo(crossX, crossY - r); ctx.lineTo(crossX, crossY - 3);
+  ctx.moveTo(crossX, crossY + 3); ctx.lineTo(crossX, crossY + r);
+  ctx.stroke();
+  ctx.beginPath(); ctx.arc(crossX, crossY, 2, 0, TAU); ctx.stroke();
+  noGlow();
+}
+
+function drawHUD() {
+  if (state === 'TITLE') return;
+  ctx.save();
+  ctx.font = 'bold 26px "Courier New",monospace'; ctx.textAlign = 'left';
+  glow('#66eaff', 10); ctx.fillStyle = '#aef4ff';
+  ctx.fillText(String(score).padStart(7, '0'), 24, 40);
+  ctx.font = 'bold 18px "Courier New",monospace';
+  ctx.fillStyle = '#9fb8ff';
+  ctx.fillText('WAVE ' + wave, 24, 66);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#ffe28a';
+  ctx.fillText('HI ' + String(Math.max(highScore, score)).padStart(7, '0'), CFG.LW - 24, 40);
+  // cities remaining icons
+  const alive = cities.filter(c => c.alive || c.rebuilding > 0).length;
+  for (let i = 0; i < 6; i++) {
+    const on = i < alive;
+    ctx.fillStyle = on ? '#3fe8d2' : 'rgba(80,90,110,0.5)';
+    if (on) glow('#2fd6c2', 6); else noGlow();
+    ctx.fillRect(CFG.LW - 24 - (6 - i) * 16, 52, 9, 9);
+  }
+  // remaining missiles (total + per base), top center; pulses red when low
+  const ammoTotal = bases.reduce((s, b) => s + Math.max(0, b.ammo), 0);
+  const low = ammoTotal <= 5;
+  const blink = low && (Math.floor(tickCount / 20) % 2 === 0);
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 22px "Courier New",monospace';
+  glow(low ? '#ff4d4d' : '#8fd0ff', 8);
+  ctx.fillStyle = blink ? '#ff8888' : (low ? '#ff6b6b' : '#bfe4ff');
+  ctx.fillText('MISSILES ' + String(ammoTotal).padStart(2, '0'), CFG.LW / 2, 40);
+  ctx.font = '14px "Courier New",monospace';
+  ctx.fillStyle = '#7688b8';
+  noGlow();
+  ctx.fillText('[' + bases.map(b => Math.max(0, b.ammo)).join(' · ') + ']', CFG.LW / 2, 60);
+  noGlow();
+  ctx.restore();
+}
+
+/* ---- full-screen overlays drawn in logical space ---- */
+function dim(alpha) {
+  ctx.setTransform(S, 0, 0, S, 0, 0);
+  ctx.fillStyle = 'rgba(2,2,10,' + alpha + ')';
+  // cover the whole window including letterbox bands, not just the logical play area
+  ctx.fillRect(-ox / S, -oy / S, canvas.width / S, canvas.height / S);
+  ctx.translate(ox / S, oy / S);
+}
+function panel(title, sub, titleColor, y0) {
+  ctx.save();
+  ctx.textAlign = 'center';
+  glow(titleColor, 26);
+  ctx.fillStyle = titleColor;
+  ctx.font = 'bold 72px "Courier New",monospace';
+  ctx.fillText(title, CFG.LW / 2, y0);
+  noGlow();
+  if (sub) {
+    ctx.font = '20px "Courier New",monospace';
+    ctx.fillStyle = '#c9d6ff';
+    let y = y0 + 44;
+    for (const line of sub) { ctx.fillText(line, CFG.LW / 2, y); y += 30; }
+  }
+  ctx.restore();
+}
+function drawTitle() {
+  dim(0.35);
+  ctx.save();
+  ctx.textAlign = 'center';
+  const pulse = 0.6 + 0.4 * Math.sin(tickCount * 0.06);
+  glow('#ff4d6d', 30);
+  ctx.fillStyle = '#ff6b85';
+  ctx.font = 'bold 84px "Courier New",monospace';
+  ctx.fillText('MISSILE COMMAND', CFG.LW / 2, 250);
+  noGlow();
+  glow('#66eaff', 12);
+  ctx.fillStyle = '#aef4ff'; ctx.font = '22px "Courier New",monospace';
+  ctx.fillText('DEFEND THE SIX CITIES', CFG.LW / 2, 300);
+  ctx.globalAlpha = pulse;
+  ctx.font = 'bold 30px "Courier New",monospace';
+  ctx.fillStyle = '#ffe28a';
+  ctx.fillText('CLICK / TAP TO START', CFG.LW / 2, 400);
+  ctx.globalAlpha = 1;
+  noGlow();
+  ctx.font = '18px "Courier New",monospace';
+  ctx.fillStyle = '#9fb8ff';
+  ctx.fillText('HIGH SCORE  ' + String(highScore).padStart(7, '0'), CFG.LW / 2, 452);
+  ctx.fillStyle = '#7688b8'; ctx.font = '16px "Courier New",monospace';
+  ctx.fillText('MOUSE / TOUCH — FIRE    A S D or 1 2 3 — BASE    ARROWS — AIM    SPACE — FIRE', CFG.LW / 2, 560);
+  ctx.fillText('P / ESC — PAUSE    M — MUTE    V — CRT SCANLINES', CFG.LW / 2, 588);
+  ctx.restore();
+}
+function drawIntermission() {
+  const it = intermission;
+  dim(0.62);
+  ctx.save();
+  ctx.textAlign = 'center';
+  glow('#66eaff', 18);
+  ctx.fillStyle = '#aef4ff'; ctx.font = 'bold 52px "Courier New",monospace';
+  ctx.fillText('WAVE ' + wave + ' CLEARED', CFG.LW / 2, 200);
+  noGlow();
+  ctx.font = '26px "Courier New",monospace';
+  let y = 270;
+  ctx.fillStyle = '#3fe8d2';
+  ctx.fillText('CITIES SAVED  x' + it.citiesBefore + '   +' + it.shownCity, CFG.LW / 2, y); y += 42;
+  ctx.fillStyle = '#6fe0ff';
+  ctx.fillText('INTERCEPTORS LEFT       +' + it.shownAmmo, CFG.LW / 2, y); y += 42;
+  ctx.fillStyle = '#ffe28a'; ctx.font = 'bold 30px "Courier New",monospace';
+  ctx.fillText('BONUS  +' + (it.shownCity + it.shownAmmo), CFG.LW / 2, y); y += 70;
+  if (it.phase === 'cd') {
+    const blink = (tickCount >> 4) & 1;
+    if (blink) {
+      glow('#ff9c3d', 14); ctx.fillStyle = '#ffb066'; ctx.font = 'bold 34px "Courier New",monospace';
+      ctx.fillText('NEXT WAVE IN ' + it.cdLeft + ' . . .', CFG.LW / 2, y);
+      noGlow();
+    }
+  }
+  ctx.restore();
+}
+function drawCenterPanel(title, sub, color) {
+  dim(0.6);
+  panel(title, sub, color, CFG.LH / 2 - 20);
+}
+function drawGameOver() {
+  dim(0.66);
+  ctx.save();
+  ctx.textAlign = 'center';
+  glow('#ff4d4d', 26);
+  ctx.fillStyle = '#ff6b6b'; ctx.font = 'bold 78px "Courier New",monospace';
+  ctx.fillText('GAME OVER', CFG.LW / 2, 230);
+  noGlow();
+  ctx.font = '28px "Courier New",monospace'; ctx.fillStyle = '#c9d6ff';
+  ctx.fillText('FINAL SCORE   ' + score, CFG.LW / 2, 305);
+  ctx.fillText('WAVES SURVIVED   ' + wave, CFG.LW / 2, 345);
+  ctx.fillStyle = '#ffe28a';
+  ctx.fillText('HIGH SCORE   ' + highScore + (score >= highScore && score > 0 ? '   ★ NEW!' : ''), CFG.LW / 2, 385);
+  // restart button
+  const hov = 0.7 + 0.3 * Math.sin(tickCount * 0.1);
+  glow('#66eaff', 16);
+  ctx.strokeStyle = 'rgba(120,230,255,' + hov + ')'; ctx.lineWidth = 2;
+  ctx.fillStyle = 'rgba(30,60,110,0.5)';
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(BTN.x, BTN.y, BTN.w, BTN.h, 10); else ctx.rect(BTN.x, BTN.y, BTN.w, BTN.h);
+  ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#aef4ff'; ctx.font = 'bold 30px "Courier New",monospace';
+  ctx.fillText('RESTART  (R)', CFG.LW / 2, BTN.y + 42);
+  noGlow();
+  ctx.restore();
+}
+
+/* ============================ MAIN LOOP (fixed timestep) ============================ */
+let last = performance.now(), acc = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  let elapsed = now - last; last = now;
+  if (elapsed > CFG.MAX_CATCHUP) elapsed = CFG.MAX_CATCHUP; // tab-switch clamp
+  acc += elapsed;
+  while (acc >= CFG.STEP) { update(); acc -= CFG.STEP; }
+  draw();
+}
+requestAnimationFrame(frame);
+
+/* ============================ TEST HOOKS (deterministic verification) ============================ */
+window.__test = {
+  step(n) { for (let i = 0; i < n; i++) { update(); draw(); } },
+  tick(n) { for (let i = 0; i < n; i++) update(); },
+  get state() { return state; },
+  set state(v) { state = v; },
+  get score() { return score; },
+  set score(v) { score = v; },
+  get wave() { return wave; },
+  get bases() { return bases; },
+  get cities() { return cities; },
+  get enemies() { return enemies; },
+  get interceptors() { return interceptors; },
+  get explosions() { return explosions; },
+  get bombers() { return bombers; },
+  get satellites() { return satellites; },
+  get steps() { return tickCount; },
+  set wave(v) { wave = v; },
+  boom(x, y, friendly, size) { boom(x, y, friendly, size); },
+  giveAmmo(n) { for (const b of bases) b.ammo += n; },
+  start() { Audio_.unlock(); startNewGame(); },
+  fire(x, y) { fireAt(x, y); },
+  spawnEnemyRaw(e) { enemies.push(e); },
+  spawnEnemy(kind) { const t = pickTarget(); spawnEnemy(rand(100, CFG.LW - 100), -10, t.x, t.y, kind || 'icbm'); },
+  killAllCities() { for (const c of cities) destroyCity(c); },
+  clearEnemies() { enemies.length = 0; spawnQueue = 0; bombers.length = 0; satellites.length = 0; }
+};
+</script>
+</body>
+</html>
+

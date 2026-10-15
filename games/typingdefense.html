@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>TYPING DEFENSE // NEON PROTOCOL</title>
+<style>
+  :root{
+    --bg:#070b1a; --cyan:#22d3ee; --magenta:#e879f9; --green:#4ade80;
+    --red:#f87171; --text:#e2e8f0; --dim:#64748b;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);
+    font-family:'Segoe UI',system-ui,sans-serif;color:var(--text);
+    -webkit-user-select:none;user-select:none;}
+  #game{display:block;position:absolute;inset:0;}
+  .overlay{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:18px;z-index:10;
+    background:rgba(7,11,26,.86);backdrop-filter:blur(6px);text-align:center;padding:24px;}
+  .hidden{display:none !important;}
+  h1{font-size:clamp(34px,7vw,64px);letter-spacing:.12em;font-weight:900;
+    background:linear-gradient(90deg,var(--cyan),var(--magenta));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    text-shadow:0 0 40px rgba(34,211,238,.25);}
+  .sub{color:var(--dim);max-width:520px;line-height:1.6;font-size:15px;}
+  .sub b{color:var(--text);}
+  .btn{font:inherit;font-weight:700;letter-spacing:.08em;padding:12px 34px;
+    border-radius:10px;border:1px solid var(--cyan);background:transparent;
+    color:var(--cyan);cursor:pointer;transition:all .15s;text-transform:uppercase;font-size:15px;}
+  .btn:hover{background:var(--cyan);color:#04121a;box-shadow:0 0 24px rgba(34,211,238,.5);}
+  .btn.mag{border-color:var(--magenta);color:var(--magenta);}
+  .btn.mag:hover{background:var(--magenta);color:#1a0414;box-shadow:0 0 24px rgba(232,121,249,.5);}
+  .diffRow{display:flex;gap:12px;flex-wrap:wrap;justify-content:center;}
+  .stats{color:var(--dim);font-size:13px;line-height:1.9;}
+  .stats b{color:var(--cyan);font-variant-numeric:tabular-nums;}
+  .goStats{font-size:16px;line-height:2.1;}
+  .goStats b{color:var(--magenta);font-variant-numeric:tabular-nums;font-size:20px;}
+  #muteBtn{position:absolute;top:14px;right:16px;z-index:11;background:transparent;
+    border:1px solid #1e3a5f;color:var(--dim);border-radius:8px;padding:6px 12px;
+    cursor:pointer;font:inherit;font-size:13px;}
+  #muteBtn:hover{color:var(--cyan);border-color:var(--cyan);}
+  /* on-screen keyboard fallback for touch devices */
+  #kb{position:absolute;left:0;right:0;bottom:0;z-index:9;display:none;
+    flex-direction:column;gap:6px;padding:8px;background:rgba(7,11,26,.92);}
+  #kb .row{display:flex;gap:6px;justify-content:center;}
+  #kb button{flex:1;max-width:44px;min-width:24px;padding:10px 0;border-radius:6px;
+    border:1px solid #1e3a5f;background:#0b1330;color:var(--text);
+    font:700 14px monospace;cursor:pointer;}
+  #kb button:active{background:var(--cyan);color:#04121a;}
+  @media (hover:none) and (pointer:coarse){ #kb{display:flex;} }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<button id="muteBtn">♪ SOUND</button>
+
+<div id="menu" class="overlay">
+  <h1>TYPING DEFENSE</h1>
+  <div class="sub">
+    Hostile words are falling toward your base. <b>Type a word to destroy it.</b><br>
+    Wrong keys break your combo. Words that reach the base cost HP.<br>
+    Type power-up names to grab them: <b>SLOW · BOMB · SHIELD · TYPO</b><br>
+    <span style="font-size:13px;color:#475569">Esc = pause · M = mute (on menus only) · Backspace = drop word</span>
+  </div>
+  <div class="diffRow">
+    <button class="btn" data-diff="easy">Easy</button>
+    <button class="btn mag" data-diff="normal">Normal</button>
+    <button class="btn" data-diff="hard">Hard</button>
+  </div>
+  <div class="stats" id="menuStats"></div>
+</div>
+
+<div id="pauseOv" class="overlay hidden">
+  <h1 style="font-size:42px">PAUSED</h1>
+  <button class="btn" id="resumeBtn">Resume</button>
+  <button class="btn mag" id="pauseRestartBtn">Restart</button>
+</div>
+
+<div id="goOv" class="overlay hidden">
+  <h1 style="font-size:48px;background:linear-gradient(90deg,#f87171,#e879f9);-webkit-background-clip:text;background-clip:text;">BASE DESTROYED</h1>
+  <div class="goStats" id="goStats"></div>
+  <button class="btn mag" id="againBtn">Play Again</button>
+</div>
+
+<div id="kb"></div>
+
+<script>
+(() => {
+'use strict';
+
+/* ============================ WORD BANK (tiers by length) ============================ */
+const TIERS = [
+  // tier 0 — 3-5 letters
+  ('run hit sky map sun red big cat dog box key end and war jet bug cap pen log net gap rim zip odd wet dry fog ice ash ore cod eel owl bee bat fox cub pig hen nut jam egg mix tap pop nod rig lid sip tug van cab bus map sad mad bad gap ham can man fan ran sat hat pat mat rat bag wag lag rag').split(' '),
+  // tier 1 — 5-6 letters
+  ('cloud cyber pulse glitch proxy node quota virus laser turbo orbit matrix patch stack thread socket kernel render buffer sprite shader vector raster cipher daemon module deploy script string struct class token frame heap cache guard flash storm blaze drift spark shield power blade quest magic rune myth forge craft scroll goblin dragon knight arrow sword spear torch camp vault lock trap ghost shadow demon angel comet meteor nova stellar plasma quantum photon proton neutron electron').split(' '),
+  // tier 2 — 6-8 letters
+  ('firewall malware exploit sandbox payload breach packet socket router domain server client access admin system window module object method lambda async promise array number string boolean integer syntax runtime compile debug error crash hang leak deadlock thread memory pointer register binary hexidecimal decrypt encrypt hashcode salted session cookie header browser cache proxy tunnel portscan sniffing botnet trojan rootkit keylogger phishing spamming malware dropper wormhole starport nebula asteroid gravity warpcore shields phasers torpedo hullbreach').split(' '),
+  // tier 3 — 8-10 letters
+  ('overclock keyboard terminal function variable pipeline database query schema index foreign trigger stored rollback commit branch merge rebase conflict upstream stash checkout headless snapshot checksum entropy algorithm recursion iteration polymorphism abstraction inheritance singleton observer mediator factory builder adapter decorator iterator generator coroutine middleware bandwidth throughput latency heartbeat dashboard stylesheet viewport gradient transform transition animation interpolation').split(' '),
+  // tier 4 — 10+ letters
+  ('vulnerability authentication authorization cryptocurrency machinelearning architecture microservice kubernetes orchestration virtualization containerization parallelism concurrency encryption decompression interpolation visualization representation customization accessibility internationalization responsibility telecommunications transformation experimentation hyperconvergence quantummechanics cybersecurity reconnaissance privilegeescalation')
+];
+
+const POWERUPS = [
+  { name:'slow',   color:'#38bdf8', desc:'SLOW TIME' },
+  { name:'bomb',   color:'#fb923c', desc:'BOMB' },
+  { name:'shield', color:'#4ade80', desc:'SHIELD' },
+  { name:'typo',   color:'#e879f9', desc:'TYPO SHIELD' },
+];
+
+const DIFF = {
+  easy:   { speed:26, ramp:2.0, gap:2.7, label:'EASY',   bossEvery:5,  hp:3 },
+  normal: { speed:38, ramp:2.8, gap:2.1, label:'NORMAL', bossEvery:5,  hp:3 },
+  hard:   { speed:52, ramp:3.6, gap:1.5, label:'HARD',   bossEvery:3,  hp:3 },
+};
+
+/* ============================ CANVAS SETUP (DPR aware) ============================ */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ============================ PERSISTENT STATS ============================ */
+const LS_KEY = 'typingD…tats';
+let persist = { best:0, totalWords:0, games:0 };
+try { persist = Object.assign(persist, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); } catch(e){}
+function savePersist(){ try { localStorage.setItem(LS_KEY, JSON.stringify(persist)); } catch(e){} }
+
+/* ============================ AUDIO (WebAudio, generated, no files) ============================ */
+let AC = null, muted = false;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function tone(freq, dur, type, vol, slide){
+  if (muted) return; const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type||'square'; o.frequency.value = freq;
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30,freq+slide), ac.currentTime+dur);
+  g.gain.setValueAtTime(vol||0.06, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime+dur);
+  o.connect(g).connect(ac.destination); o.start(); o.stop(ac.currentTime+dur+0.02);
+}
+const sfx = {
+  type:    () => tone(660, .05, 'square', .035),
+  error:   () => tone(140, .15, 'sawtooth', .07, -60),
+  destroy: () => { tone(520, .18, 'sawtooth', .07, -380); tone(880, .1, 'square', .04, -500); },
+  power:   () => { tone(440,.09,'sine',.07); setTimeout(()=>tone(660,.09,'sine',.07),70); setTimeout(()=>tone(880,.14,'sine',.07),140); },
+  hit:     () => { tone(90, .35, 'sawtooth', .12, -50); tone(60,.4,'triangle',.1); },
+  wave:    () => { tone(330,.12,'triangle',.06); setTimeout(()=>tone(495,.2,'triangle',.06),110); },
+  gameover:() => { tone(300,.3,'sawtooth',.09,-100); setTimeout(()=>tone(180,.5,'sawtooth',.09,-120),250); },
+};
+
+/* ============================ GAME STATE ============================ */
+const HUD_H = 118;
+let G = null;
+
+function freshGame(diff){
+  return {
+    cfg: DIFF[diff], diff,
+    phase: 'playing',            // playing | over
+    words: [],                   // active falling words
+    queue: [], spawnTimer: 0,
+    wave: 0, waveState: 'cooldown', cooldown: 1.6,
+    banner: { text: 'DEFEND THE BASE', t: 2.0 },
+    score: 0, combo: 0,
+    hp: DIFF[diff].hp,
+    baseShield: false,
+    slowT: 0, typoT: 0,
+    elapsed: 0,                  // active playtime (pause excluded -> WPM honest)
+    correctChars: 0, totalKeys: 0, kills: 0, peakWpm: 0, wpmSampleT: 0,
+    target: null,
+    particles: [], floats: [], stars: makeStars(),
+    shake: 0, flash: 0, caretFlash: 0,
+  };
+}
+function makeStars(){
+  const s=[]; for(let i=0;i<110;i++) s.push({x:Math.random(),y:Math.random(),z:.3+Math.random()*.7}); return s;
+}
+
+/* ============================ SPAWNING ============================ */
+function tierFor(wave){
+  let t = wave<=2?0 : wave<=4?1 : wave<=7?2 : wave<=10?3 : 4;
+  if (Math.random() < .18) t = Math.max(0, Math.min(4, t + (Math.random()<.5?-1:1)));
+  return t;
+}
+function pickWord(wave, boss){
+  let t = tierFor(wave) + (boss?1:0); t = Math.min(t, 4);
+  const list = TIERS[t];
+  return list[(Math.random()*list.length)|0];
+}
+function buildWave(n){
+  const cfg = G.cfg, boss = n % cfg.bossEvery === 0 && n >= cfg.bossEvery;
+  G.queue = [];
+  if (boss){
+    const count = Math.min(2 + ((n/cfg.bossEvery)|0), 4);
+    const hp = Math.min(3, 2 + ((n/15)|0));
+    for (let i=0;i<count;i++) G.queue.push({ word: pickWord(n,true), boss:true, hp, delay: 1.4 + i*3.2 });
+    G.banner = { text:'⚠ BOSS WAVE ' + n + ' ⚠', t: 2.4, color:'#f472b6' };
+  } else {
+    const count = Math.min(4 + n*2, 22);
+    for (let i=0;i<count;i++) G.queue.push({ word: pickWord(n,false), boss:false, hp:1, delay: i*cfg.gap });
+    G.banner = { text:'WAVE ' + n, t: 1.8, color:'#22d3ee' };
+  }
+  sfx.wave();
+}
+function measure(word, boss){
+  const fs = Math.max(15, Math.min(21, 24 - word.length*0.55 + (boss?3:0)));
+  const font = 'bold ' + fs + 'px "JetBrains Mono",Consolas,Menlo,monospace';
+  ctx.font = font;
+  return { font, fs, w: ctx.measureText(word).width };
+}
+/* Spawn with horizontal jitter + spacing checks so words never visually collide */
+function spawnWord(spec){
+  const m = measure(spec.word, spec.boss);
+  const pad = 30, half = m.w/2 + 8;
+  let x = W/2, ok = false;
+  for (let a=0; a<60 && !ok; a++){
+    x = pad + half + Math.random() * Math.max(1, W - 2*(pad+half));
+    ok = !G.words.some(o => o.y < 110 && Math.abs(o.x - x) < (o.m.w + m.w)/2 + 26);
+  }
+  const speed = G.cfg.speed + G.wave * G.cfg.ramp + Math.random()*6;
+  G.words.push({ word: spec.word, typed:'', x, y:-24, speed, boss:spec.boss,
+    hp: spec.hp, m, shake:0, isPowerup:false });
+}
+function spawnPowerup(x, y){
+  const p = POWERUPS[(Math.random()*POWERUPS.length)|0];
+  const m = measure(p.name, false);
+  G.words.push({ word: p.name, typed:'', x: Math.min(Math.max(x, 60), W-60), y,
+    speed: 26, hp:1, boss:false, m, shake:0, isPowerup:true, color:p.color });
+}
+
+/* ============================ GAME LOGIC ============================ */
+function wpm(){
+  const min = G.elapsed/60;
+  return min < 0.08 ? 0 : Math.round((G.correctChars/5)/min);
+}
+function accuracy(){ return G.totalKeys===0 ? 100 : Math.round(100*G.correctChars/G.totalKeys); }
+
+function killWord(w, byBomb){
+  w.dead = true;
+  burst(w.x, w.y, w.isPowerup ? w.color : '#22d3ee', w.boss?34:18);
+  if (w.isPowerup){
+    applyPowerup(w.word, w);
+  } else {
+    w.hp--;
+    if (w.hp > 0){                       // boss took a hit but survives
+      w.typed = ''; w.shake = .35; sfx.type();
+      G.floats.push({ x:w.x, y:w.y-18, t:1, text:'HIT x'+w.hp, color:'#f472b6' });
+      return;
+    }
+    if (!byBomb){
+      G.combo++;
+      const mult = 1 + G.combo*0.1;
+      const pts = Math.round(10 * w.word.length * mult * (w.boss?3:1));
+      G.score += pts;
+      G.kills++;
+      G.floats.push({ x:w.x, y:w.y-16, t:1, text:'+'+pts, color:'#4ade80' });
+      sfx.destroy();
+      if (Math.random() < .10) spawnPowerup(w.x, w.y);
+    }
+  }
+  if (G.target === w) G.target = null;
+}
+function applyPowerup(name, w){
+  sfx.power();
+  if (name==='slow'){ G.slowT = 5; }
+  else if (name==='typo'){ G.typoT = 8; }
+  else if (name==='shield'){ G.baseShield = true; }
+  else if (name==='bomb'){
+    const enemies = G.words.filter(o=>!o.isPowerup && !o.dead)
+      .sort((a,b)=>b.y-a.y).slice(0,3);
+    enemies.forEach(o=>{ G.score += 10*o.word.length; killWord(o, true); });
+  }
+  G.floats.push({ x:w.x, y:w.y-16, t:1.4, text: (POWERUPS.find(p=>p.name===name)||{desc:name}).desc + '!', color:w.color||'#e879f9', big:true });
+}
+function baseHit(w){
+  if (G.baseShield){
+    G.baseShield = false; sfx.power();
+    G.floats.push({ x:w.x, y:H-HUD_H-20, t:1.2, text:'SHIELDED!', color:'#4ade80' });
+    burst(w.x, H-HUD_H, '#4ade80', 24);
+  } else {
+    G.hp--; G.combo = 0; G.shake = 1; G.flash = 1; sfx.hit();
+    burst(w.x, H-HUD_H, '#f87171', 30);
+    if (G.hp <= 0) return gameOver();
+  }
+}
+function gameOver(){
+  G.phase = 'over';
+  sfx.gameover();
+  persist.games++; persist.totalWords += G.kills;
+  const isBest = G.score > persist.best;
+  persist.best = Math.max(persist.best, G.score);
+  savePersist();
+  document.getElementById('goStats').innerHTML =
+    'Waves survived <b>' + Math.max(0, G.wave - (G.waveState==='cooldown'?1:0)) + '</b> &nbsp;·&nbsp; ' +
+    'Words destroyed <b>' + G.kills + '</b><br>' +
+    'Peak WPM <b>' + G.peakWpm + '</b> &nbsp;·&nbsp; Accuracy <b>' + accuracy() + '%</b><br>' +
+    'Score <b>' + G.score + '</b>' + (isBest ? ' &nbsp;<span style="color:#4ade80">★ NEW BEST!</span>' : '');
+  document.getElementById('goOv').classList.remove('hidden');
+}
+
+/* ---------- input ---------- */
+function handleChar(key){
+  if (!G || G.phase!=='playing') return;
+  audio();
+  G.totalKeys++;
+  const t = G.target;
+  if (t && !t.dead){
+    const expected = t.word[t.typed.length];
+    if (key === expected){
+      t.typed += key; G.correctChars++; sfx.type();
+      if (t.typed.length === t.word.length) killWord(t);
+    } else wrongKey(t);
+  } else {
+    const cands = G.words.filter(w=>!w.dead && w.word[0]===key);
+    if (cands.length){
+      // lowest word (closest to base) gets priority; powerups win ties
+      cands.sort((a,b)=> (b.isPowerup-a.isPowerup) || (b.y-a.y));
+      const w = cands[0];
+      G.target = w; w.typed = key; G.correctChars++; sfx.type();
+      if (w.typed.length === w.word.length) killWord(w);
+    } else wrongKey(null);
+  }
+}
+function wrongKey(w){
+  G.caretFlash = .35; sfx.error();
+  if (!G.typoT) G.combo = 0;
+  if (w){ w.shake = .3; }
+}
+function handleBackspace(){
+  if (!G || G.phase!=='playing') return;
+  const t = G.target;
+  if (t && t.typed.length > 1) t.typed = t.typed.slice(0,-1);
+  else if (t) { t.typed=''; G.target = null; }
+}
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape'){ togglePause(); return; }
+  // 'M' mutes only outside active play — never steals the letter from typing
+  if ((e.key === 'm' || e.key === 'M') && (!G || G.phase !== 'playing')){ toggleMute(); return; }
+  if (!G || G.phase!=='playing') return;
+  if (e.key === 'Backspace'){ e.preventDefault(); handleBackspace(); return; }
+  if (e.key.length === 1 && /[a-zA-Z]/.test(e.key)) handleChar(e.key.toLowerCase());
+});
+
+/* ---------- update ---------- */
+function update(dt){
+  const g = G;
+  g.elapsed += dt;
+  const ts = g.slowT > 0 ? 0.35 : 1;
+  if (g.slowT > 0) g.slowT = Math.max(0, g.slowT - dt);
+  if (g.typoT > 0) g.typoT = Math.max(0, g.typoT - dt);
+
+  // wave scheduler: spawn queue -> clearing -> cooldown banner -> next wave
+  if (g.waveState === 'spawning'){
+    g.spawnTimer -= dt;
+    if (g.spawnTimer <= 0 && g.queue.length){
+      const spec = g.queue.shift();
+      spawnWord(spec);
+      // boss waves pace their few long words wider than normal waves
+      g.spawnTimer = spec.boss ? Math.max(2.0, g.cfg.gap * 1.6) : g.cfg.gap;
+    }
+    if (!g.queue.length) g.waveState = 'clearing';
+  } else if (g.waveState === 'clearing' && g.words.filter(w=>!w.dead).length === 0){
+    g.waveState = 'cooldown'; g.cooldown = 2.2;
+    g.banner = { text:'WAVE ' + g.wave + ' CLEARED', t:2.0, color:'#4ade80' };
+    g.score += 50 * g.wave;
+  } else if (g.waveState === 'cooldown'){
+    g.cooldown -= dt;
+    if (g.cooldown <= 0){ g.wave++; g.waveState='spawning'; g.spawnTimer=0.6; buildWave(g.wave); }
+  }
+
+  // falling words
+  const baseY = H - HUD_H;
+  for (const w of g.words){
+    if (w.dead) continue;
+    w.y += w.speed * dt * ts;
+    if (w.shake > 0) w.shake = Math.max(0, w.shake - dt);
+    if (w.y >= baseY - 14){
+      w.dead = true;
+      if (g.target === w) g.target = null;
+      if (w.isPowerup) burst(w.x, baseY, w.color, 8);
+      else baseHit(w);
+    }
+  }
+  g.words = g.words.filter(w=>!w.dead);
+
+  // particles / floats / effects
+  for (const p of g.particles){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=420*dt; p.t-=dt; }
+  g.particles = g.particles.filter(p=>p.t>0);
+  for (const f of g.floats){ f.y-=34*dt; f.t-=dt; }
+  g.floats = g.floats.filter(f=>f.t>0);
+  if (g.banner.t > 0) g.banner.t -= dt;
+  g.shake = Math.max(0, g.shake - dt*3);
+  g.flash = Math.max(0, g.flash - dt*2.2);
+  g.caretFlash = Math.max(0, g.caretFlash - dt);
+
+  // peak WPM sampling
+  g.wpmSampleT += dt;
+  if (g.wpmSampleT > 1){ g.wpmSampleT = 0; g.peakWpm = Math.max(g.peakWpm, wpm()); }
+}
+function burst(x, y, color, n){
+  for (let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, s = 60+Math.random()*260;
+    G.particles.push({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s-60, t:.4+Math.random()*.5, color, size:1.5+Math.random()*2.5 });
+  }
+}
+
+/* ============================ RENDER ============================ */
+function render(time){
+  const g = G;
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.clearRect(0,0,W,H);
+
+  // background gradient
+  const grad = ctx.createLinearGradient(0,0,0,H);
+  grad.addColorStop(0,'#070b1a'); grad.addColorStop(1,'#0d1330');
+  ctx.fillStyle = grad; ctx.fillRect(0,0,W,H);
+
+  if (!g) return;
+
+  // screen shake
+  if (g.shake > 0) ctx.translate((Math.random()-.5)*g.shake*14, (Math.random()-.5)*g.shake*10);
+
+  // parallax starfield
+  for (const s of g.stars){
+    const yy = (s.y*H + time*0.012*s.z) % H;
+    ctx.fillStyle = 'rgba(148,163,184,'+(0.12+s.z*0.35)+')';
+    ctx.fillRect(s.x*W, yy, s.z*1.8, s.z*1.8);
+  }
+
+  // neon grid floor above the HUD
+  const baseY = H - HUD_H;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(34,211,238,.16)'; ctx.lineWidth = 1;
+  for (let i=0;i<9;i++){ const y = baseY - i*i*2.1; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  for (let x=-W; x<=W*2; x+=W/9){
+    ctx.beginPath(); ctx.moveTo(W/2 + (x-W/2)*0.25, baseY-70); ctx.lineTo(x, baseY); ctx.stroke();
+  }
+  ctx.strokeStyle = 'rgba(34,211,238,'+(0.5+0.3*Math.sin(time*0.004))+')';
+  ctx.shadowColor = '#22d3ee'; ctx.shadowBlur = 14; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, baseY); ctx.lineTo(W, baseY); ctx.stroke();
+  ctx.restore();
+
+  // HP hearts on the base line
+  ctx.font = '18px monospace'; ctx.textAlign = 'left';
+  for (let i=0;i<g.cfg.hp;i++){
+    ctx.fillStyle = i < g.hp ? '#f87171' : 'rgba(100,116,139,.35)';
+    ctx.fillText('♥', 18 + i*24, baseY + 22);
+  }
+  if (g.baseShield){ ctx.fillStyle='#4ade80'; ctx.fillText('⛨', 18 + g.cfg.hp*24 + 6, baseY + 22); }
+
+  // falling words
+  ctx.textAlign = 'center';
+  for (const w of g.words){
+    let x = w.x;
+    if (w.shake > 0) x += (Math.random()-.5) * w.shake * 16;
+    ctx.font = w.m.font;
+    const typed = w.word.slice(0, w.typed.length);
+    const rest = w.word.slice(w.typed.length);
+    const isTarget = g.target === w;
+    ctx.shadowBlur = isTarget ? 16 : 8;
+    ctx.shadowColor = w.isPowerup ? w.color : (w.boss ? '#f472b6' : (isTarget ? '#4ade80' : '#22d3ee'));
+    ctx.fillStyle = w.isPowerup ? w.color : (w.boss ? '#f472b6' : '#e2e8f0');
+    ctx.fillText(rest, x, w.y);
+    const restW = ctx.measureText(rest).width;
+    ctx.fillStyle = '#4ade80';
+    ctx.fillText(typed, x - restW/2 - ctx.measureText(typed).width/2, w.y);
+    if (w.boss && w.hp > 1){
+      ctx.shadowBlur = 0; ctx.font = 'bold 12px monospace'; ctx.fillStyle = '#f472b6';
+      ctx.fillText('x' + w.hp, x, w.y - w.m.fs - 4);
+    }
+  }
+  ctx.shadowBlur = 0;
+
+  // particles
+  for (const p of g.particles){
+    ctx.globalAlpha = Math.max(0, p.t*2);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x-p.size/2, p.y-p.size/2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+
+  // floating score / event text
+  for (const f of g.floats){
+    ctx.globalAlpha = Math.min(1, f.t*1.6);
+    ctx.font = f.big ? 'bold 18px monospace' : 'bold 14px monospace';
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+
+  // wave banner
+  if (g.banner.t > 0){
+    ctx.globalAlpha = Math.min(1, g.banner.t);
+    ctx.font = 'bold clamp(28px,5vw,44px) monospace'.replace('clamp(28px,5vw,44px)','40px');
+    ctx.fillStyle = g.banner.color || '#22d3ee';
+    ctx.shadowColor = g.banner.color || '#22d3ee'; ctx.shadowBlur = 24;
+    ctx.fillText(g.banner.text, W/2, H*0.42);
+    ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+  }
+
+  /* ---- HUD ---- */
+  ctx.fillStyle = 'rgba(4,8,20,.92)';
+  ctx.fillRect(0, baseY+2, W, HUD_H);
+  ctx.textAlign = 'left';
+  ctx.font = 'bold 15px monospace';
+  ctx.fillStyle = '#22d3ee'; ctx.fillText('SCORE ' + g.score, 18, baseY + 52);
+  ctx.fillStyle = '#e879f9'; ctx.fillText('WAVE ' + Math.max(1,g.wave), 18, baseY + 76);
+  if (g.combo > 1){ ctx.fillStyle = '#facc15'; ctx.fillText('COMBO x' + (1+g.combo*0.1).toFixed(1), 18, baseY + 100); }
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#4ade80'; ctx.fillText(wpm() + ' WPM', W-18, baseY + 52);
+  ctx.fillStyle = '#94a3b8'; ctx.fillText(accuracy() + '% ACC', W-18, baseY + 76);
+  if (g.slowT>0){ ctx.fillStyle='#38bdf8'; ctx.fillText('SLOW '+g.slowT.toFixed(1)+'s', W-18, baseY + 100); }
+  else if (g.typoT>0){ ctx.fillStyle='#e879f9'; ctx.fillText('TYPO SHIELD '+g.typoT.toFixed(1)+'s', W-18, baseY + 100); }
+
+  // current input (typed prefix of target word) with blinking caret
+  ctx.textAlign = 'center';
+  const input = g.target ? g.target.typed : '';
+  const blink = (time % 900) < 450;
+  const caretOn = g.caretFlash <= 0 && blink;
+  ctx.font = 'bold 30px monospace';
+  ctx.fillStyle = g.caretFlash > 0 ? '#f87171' : '#e2e8f0';
+  ctx.shadowColor = g.caretFlash > 0 ? '#f87171' : '#22d3ee'; ctx.shadowBlur = 12;
+  ctx.fillText((input || (g.target?'':'·')) + (caretOn ? '▌' : ' '), W/2, baseY + 80);
+  ctx.shadowBlur = 0;
+  if (g.slowT > 0){ ctx.fillStyle='rgba(56,189,248,.25)'; ctx.fillRect(0,0,W,H); }
+  if (g.flash > 0){ ctx.fillStyle = 'rgba(248,50,60,'+(g.flash*0.32)+')'; ctx.fillRect(-20,-20,W+40,H+40); }
+}
+
+/* ============================ MAIN LOOP (delta-time, framerate independent) ============================ */
+let paused = false, last = performance.now();
+function frame(t){
+  const dt = Math.min(0.05, (t - last)/1000); last = t;
+  if (G && G.phase === 'playing' && !paused) update(dt);
+  render(t);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ============================ UI WIRING ============================ */
+const $ = id => document.getElementById(id);
+function refreshMenuStats(){
+  $('menuStats').innerHTML =
+    'BEST SCORE <b>' + persist.best + '</b> · WORDS TYPED <b>' + persist.totalWords + '</b> · GAMES <b>' + persist.games + '</b>';
+}
+refreshMenuStats();
+
+function startGame(diff){
+  G = freshGame(diff);
+  $('menu').classList.add('hidden');
+  $('goOv').classList.add('hidden');
+  $('pauseOv').classList.add('hidden');
+  paused = false; last = performance.now();
+}
+function togglePause(){
+  if (!G || G.phase !== 'playing') return;
+  paused = !paused;
+  $('pauseOv').classList.toggle('hidden', !paused);
+  if (!paused) last = performance.now();   // freeze the clock while paused -> honest WPM
+}
+function toggleMute(){
+  muted = !muted;
+  $('muteBtn').textContent = muted ? '✕ MUTED' : '♪ SOUND';
+}
+$('muteBtn').addEventListener('click', toggleMute);
+document.querySelectorAll('[data-diff]').forEach(b =>
+  b.addEventListener('click', () => { audio(); startGame(b.dataset.diff); }));
+$('resumeBtn').addEventListener('click', togglePause);
+$('pauseRestartBtn').addEventListener('click', () => startGame(G.diff));
+$('againBtn').addEventListener('click', () => { $('goOv').classList.add('hidden'); refreshMenuStats(); G=null; $('menu').classList.remove('hidden'); });
+
+/* on-screen QWERTY keyboard (shown on touch devices via CSS) */
+(function buildKB(){
+  const rows = ['qwertyuiop','asdfghjkl','zxcvbnm'];
+  const kb = $('kb');
+  rows.forEach((r,i) => {
+    const row = document.createElement('div'); row.className='row';
+    if (i===2){
+      const bs = document.createElement('button'); bs.textContent='⌫';
+      bs.addEventListener('pointerdown', e => { e.preventDefault(); handleBackspace(); });
+      row.appendChild(bs);
+    }
+    for (const c of r){
+      const b = document.createElement('button'); b.textContent = c.toUpperCase();
+      b.addEventListener('pointerdown', e => { e.preventDefault(); handleChar(c); });
+      row.appendChild(b);
+    }
+    kb.appendChild(row);
+  });
+})();
+
+/* debug hook for automated verification */
+window.dbg = {
+  get state(){ return { phase: G && G.phase, paused, words: G && G.words.map(w=>({word:w.word,typed:w.typed,hp:w.hp,y:Math.round(w.y)})),
+    score:G&&G.score, combo:G&&G.combo, hp:G&&G.hp, wave:G&&G.wave, wpm:wpm(), acc:accuracy(),
+    kills:G&&G.kills, waveState:G&&G.waveState }; },
+  press(k){ handleChar(k); }, back(){ handleBackspace(); },
+  setHp(n){ if(G) G.hp=n; }, dropWords(n){ if(G) G.words.forEach(w=>w.y += n); },
+};
+})();
+</script>
+</body>
+</html>

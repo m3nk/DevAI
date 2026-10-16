@@ -62,6 +62,90 @@
     color: var(--muted);
   }
   .stats b { color: var(--text); }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 18px;
+  }
+  .search {
+    position: relative;
+    flex: 1 1 240px;
+    max-width: 380px;
+  }
+  .search input {
+    width: 100%;
+    padding: 11px 36px 11px 38px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg2);
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+    transition: border-color .15s ease;
+  }
+  .search input::placeholder { color: var(--muted); }
+  .search input:focus { border-color: var(--accent); }
+  .search .mag {
+    position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
+    font-size: 14px; opacity: .55; pointer-events: none;
+  }
+  .search .clear {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    border: none; background: transparent; color: var(--muted);
+    font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: 8px;
+    display: none;
+  }
+  .search .clear:hover { color: var(--text); background: var(--card-hover); }
+  .search.has-text .clear { display: block; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .chip:hover { color: var(--text); border-color: var(--accent); }
+  .chip.active {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-color: transparent;
+    color: #fff;
+  }
+  .chip .n { opacity: .65; font-weight: 500; margin-left: 5px; }
+  .result-line {
+    margin: -4px 0 16px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--muted);
+    padding: 48px 20px;
+    border: 1px dashed var(--border);
+    border-radius: 16px;
+    font-size: 14px;
+    line-height: 1.7;
+  }
+  .type-tag {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .4px;
+    text-transform: uppercase;
+    color: var(--accent2);
+    background: rgba(159,108,255,.1);
+    border: 1px solid rgba(159,108,255,.25);
+    padding: 3px 9px;
+    border-radius: 999px;
+    align-self: flex-start;
+  }
   main {
     max-width: 1080px;
     margin: 0 auto;
@@ -177,6 +261,15 @@
 </header>
 
 <main>
+  <div class="controls">
+    <div class="search" id="search-wrap">
+      <span class="mag">🔍</span>
+      <input id="search" type="search" placeholder="Search games…" autocomplete="off" aria-label="Search games">
+      <button class="clear" id="search-clear" type="button" aria-label="Clear search">✕</button>
+    </div>
+    <div class="chips" id="type-chips" role="group" aria-label="Filter by game type"></div>
+  </div>
+  <div class="result-line" id="result-line"></div>
   <div class="grid" id="game-grid"><!-- cards injected from GAMES registry --></div>
   <div style="margin-top:18px">
     <div class="add-card">
@@ -192,12 +285,14 @@
 // To add a game: drop its HTML file in games/, add one entry here.
 //   file    → path to the game html (playable cards only)
 //   status  → 'play' or 'soon'
+//   type    → genre label used by the dashboard search/filter chips
 const GAMES = [
   {
     title: "Snake",
     icon: "🐍",
     desc: "Neon classic: smooth motion, wrap/walls modes, sounds, high score saved.",
     file: "games/snake.html",
+    type: "Arcade",
     status: "play"
   },
   {
@@ -205,6 +300,7 @@ const GAMES = [
     icon: "🏓",
     desc: "1P vs CPU (3 difficulties), local 2P, spin physics, particles, synth audio. First to 5/11/21.",
     file: "games/pong.html",
+    type: "Sports",
     status: "play"
   },
   {
@@ -212,6 +308,7 @@ const GAMES = [
     icon: "🧱",
     desc: "Smash every brick: power-ups, lasers, combos, 10 levels, synthesized sound.",
     file: "games/breakout.html",
+    type: "Arcade",
     status: "play"
   },
   {
@@ -219,6 +316,7 @@ const GAMES = [
     icon: "🃏",
     desc: "Flip cards, find pairs: 3 grid sizes, best-score records, synth sounds.",
     file: "games/memory.html",
+    type: "Puzzle",
     status: "play"
   },
   {
@@ -226,6 +324,7 @@ const GAMES = [
     icon: "🐤",
     desc: "One button. Endless pipes. Rising rage. Best score saved locally.",
     file: "games/flappy.html",
+    type: "Arcade",
     status: "play"
   },
   {
@@ -237,6 +336,7 @@ const GAMES = [
     </svg>`,
     desc: "The full maze: 4 ghosts with real AI, power pellets, tunnels, levels.",
     file: "games/pacman.html",
+    type: "Maze",
     status: "play"
   },
   {
@@ -244,6 +344,7 @@ const GAMES = [
     icon: "⭕",
     desc: "Neon X vs O: unbeatable minimax CPU, 2-player mode, score records.",
     file: "games/tictactoe.html",
+    type: "Puzzle",
     status: "play"
   },
   {
@@ -251,6 +352,7 @@ const GAMES = [
     icon: "🚀",
     desc: "Top-down space shooter: splitting asteroids, hunting ships, wave ramp, 3 lives.",
     file: "games/neonvanguard.html",
+    type: "Shooter",
     status: "play"
   },
   {
@@ -258,6 +360,7 @@ const GAMES = [
     icon: "🧟",
     desc: "Top-down zombie survival in the dark: flashlight cone, ammo economy, kill drops, escalating horde.",
     file: "games/zombielight.html",
+    type: "Survival",
     status: "play"
   },
   {
@@ -265,6 +368,7 @@ const GAMES = [
     icon: "🛡️",
     desc: "Defend six cities: 3 silos, chain-reaction interceptions, MIRVs, smart bombs, escalating waves, high score saved.",
     file: "games/missilecommand.html",
+    type: "Shooter",
     status: "play"
   },
   {
@@ -272,6 +376,7 @@ const GAMES = [
     icon: "🍉",
     desc: "Fruit Ninja style: swipe to slice, combo x3 bonuses, critical hits, bombs, 3 lives, best score saved.",
     file: "games/fruitslicer.html",
+    type: "Action",
     status: "play"
   },
   {
@@ -279,6 +384,7 @@ const GAMES = [
     icon: "⌨️",
     desc: "Type falling words to destroy them: waves, boss words, power-ups (slow/bomb/shield), live WPM + combo, best score saved.",
     file: "games/typingdefense.html",
+    type: "Typing",
     status: "play"
   },
   {
@@ -286,6 +392,7 @@ const GAMES = [
     icon: "🏰",
     desc: "Hold 25 waves with 4 tower types (gunner, cannon, frost, sniper), 3 upgrade levels, targeting modes, boss waves, 1–3× speed.",
     file: "games/towerdefense.html",
+    type: "Strategy",
     status: "play"
   },
   {
@@ -293,35 +400,99 @@ const GAMES = [
     icon: "🧛",
     desc: "Vampire Survivors-like: 7 evolving weapons, 9 passives, boss every 5 min, hooded hunter vs. bats, goblins, brutes & demons. WASD, auto-attack.",
     file: "games/vampsurvivors.html",
+    type: "Survival",
     status: "play"
   }
 ];
 // ───────────────────────────────────────────────────────────────
 
+// ─── SEARCH & FILTER ───────────────────────────────────────────
+// Types are derived from the registry, so a new game's `type` gets a chip
+// automatically. Search matches title + description + type.
+let query = "";
+let activeType = "All";
+
+function gameTypes() {
+  const seen = [];
+  for (const g of GAMES) if (g.type && !seen.includes(g.type)) seen.push(g.type);
+  return seen.sort((a, b) => a.localeCompare(b));
+}
+
+function matches(g) {
+  if (activeType !== "All" && g.type !== activeType) return false;
+  if (!query) return true;
+  const hay = `${g.title} ${g.desc} ${g.type || ""}`.toLowerCase();
+  return query.split(/\s+/).every(w => hay.includes(w));
+}
+
+function renderChips() {
+  const box = document.getElementById("type-chips");
+  const types = gameTypes();
+  const total = GAMES.length;
+  box.innerHTML = ["All", ...types].map(t => {
+    const n = t === "All" ? total : GAMES.filter(g => g.type === t).length;
+    return `<button type="button" class="chip ${t === activeType ? "active" : ""}" data-type="${t}" aria-pressed="${t === activeType}">${t}<span class="n">${n}</span></button>`;
+  }).join("");
+}
+
 function render() {
   const grid = document.getElementById("game-grid");
   let playable = 0, soon = 0;
+  for (const g of GAMES) (g.status === "play" ? playable++ : soon++);
+  document.getElementById("stat-playable").textContent = playable;
+  document.getElementById("stat-soon").textContent = soon;
+
   // Ready-to-play games always come first; "soon" cards follow.
   const ordered = [...GAMES].sort((a, b) =>
     (a.status === "play" ? 0 : 1) - (b.status === "play" ? 0 : 1)
   );
-  for (const g of ordered) {
+  const shown = ordered.filter(matches);
+
+  grid.innerHTML = shown.length ? shown.map(g => {
     const isPlay = g.status === "play";
-    if (isPlay) playable++; else soon++;
     const tag = isPlay ? "a" : "div";
     const href = isPlay ? ` href="${g.file}"` : "";
-    grid.insertAdjacentHTML("beforeend", `
+    return `
       <${tag} class="card ${isPlay ? "playable" : "soon"}"${href}>
         <span class="badge ${isPlay ? "play" : "soon"}">${isPlay ? "Play" : "Soon"}</span>
         <div class="icon">${g.icon}</div>
         <h2>${g.title}</h2>
+        ${g.type ? `<span class="type-tag">${g.type}</span>` : ""}
         <p>${g.desc}</p>
         ${isPlay ? '<span class="play-hint">▶ Play now</span>' : ""}
-      </${tag}>`);
-  }
-  document.getElementById("stat-playable").textContent = playable;
-  document.getElementById("stat-soon").textContent = soon;
+      </${tag}>`;
+  }).join("") : `<div class="empty">No games match <b>${query || activeType}</b>.<br>Try another word or pick "All".</div>`;
+
+  const line = document.getElementById("result-line");
+  line.textContent = (query || activeType !== "All")
+    ? `Showing ${shown.length} of ${GAMES.length} game${GAMES.length === 1 ? "" : "s"}`
+    : "";
+
+  renderChips();
 }
+
+document.getElementById("type-chips").addEventListener("click", (e) => {
+  const chip = e.target.closest(".chip");
+  if (!chip) return;
+  activeType = chip.dataset.type;
+  render();
+});
+
+const searchInput = document.getElementById("search");
+const searchWrap = document.getElementById("search-wrap");
+searchInput.addEventListener("input", () => {
+  query = searchInput.value.trim().toLowerCase();
+  searchWrap.classList.toggle("has-text", searchInput.value.length > 0);
+  render();
+});
+document.getElementById("search-clear").addEventListener("click", () => {
+  searchInput.value = "";
+  query = "";
+  searchWrap.classList.remove("has-text");
+  searchInput.focus();
+  render();
+});
+
 render();
 </script>
 </body>

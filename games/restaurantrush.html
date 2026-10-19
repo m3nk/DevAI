@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Restaurant Rush</title>
+<style>
+  html,body{margin:0;height:100%;background:#12100d;overflow:hidden;font-family:system-ui,-apple-system,'Segoe UI',sans-serif}
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  #frame{position:relative;line-height:0}
+  canvas{display:block;touch-action:none;cursor:pointer;border-radius:10px}
+  .ov{position:absolute;inset:0;background:rgba(20,12,8,.84);display:flex;flex-direction:column;align-items:center;justify-content:center;color:#f7ead8;text-align:center;gap:14px;padding:24px;border-radius:10px;z-index:4}
+  .ov h1{margin:0;font-size:44px;color:#ffb454;letter-spacing:1px}
+  .ov p{margin:0;max-width:640px;line-height:1.55;color:#d9c8b0;font-size:15px}
+  .btn{background:#ffb454;border:0;color:#2a1a08;font-size:20px;font-weight:700;padding:12px 34px;border-radius:10px;cursor:pointer}
+  .btn:hover{filter:brightness(1.12)}
+  .cards{display:flex;gap:14px;flex-wrap:wrap;justify-content:center}
+  .card{background:#2b2117;border:2px solid #57432e;border-radius:12px;padding:14px 12px;width:180px;color:#f7ead8;cursor:pointer;text-align:left}
+  .card:hover{border-color:#ffb454}
+  .card b{display:block;color:#ffb454;margin-bottom:6px}
+  .card small{color:#b7a68e;font-size:12.5px;line-height:1.4;display:block}
+  .card .cost{display:block;margin-top:10px;color:#9fdc7f;font-weight:700}
+  .card.off{opacity:.45;cursor:default}
+  #muteBtn{position:absolute;top:10px;right:10px;background:rgba(0,0,0,.4);color:#f7ead8;border:1px solid #57432e;border-radius:8px;padding:4px 10px;cursor:pointer;font-size:13px;z-index:6}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<div id="wrap"><div id="frame">
+  <canvas id="cv"></canvas>
+  <button id="muteBtn">Sound: On</button>
+
+  <div id="menu" class="ov">
+    <h1>Restaurant Rush</h1>
+    <p>Run the diner! Customers sit, order, and lose patience fast.
+    <b>Grill</b> burgers, <b>fry</b> fries, <b>prep</b> salads &amp; drinks, then click the dish and click a table to serve.
+    Collect money at the <b>register</b> before anyone storms out — 3 walkouts and you're closed.
+    Keys <b>1-4</b> select stations, <b>Space</b> serves the held dish to the first matching table, <b>Esc</b> drops it.</p>
+    <p id="menuBest"></p>
+    <button id="startBtn" class="btn">Start Week 1</button>
+  </div>
+
+  <div id="shop" class="ov hidden">
+    <h1 id="shopTitle">Week complete!</h1>
+    <p id="shopInfo">Spend your cash on upgrades for next week.</p>
+    <div id="shopCards" class="cards"></div>
+    <button id="nextWeek" class="btn">Next Week &#9654;</button>
+  </div>
+
+  <div id="over" class="ov hidden">
+    <h1>Closed!</h1>
+    <p id="overStats"></p>
+    <button id="againBtn" class="btn">Play Again</button>
+  </div>
+</div></div>
+
+<script>
+(() => {
+'use strict';
+/* ============================== SETUP ============================== */
+const W = 960, H = 600;
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const menuEl = document.getElementById('menu');
+const shopEl = document.getElementById('shop');
+const overEl = document.getElementById('over');
+const startBtn = document.getElementById('startBtn');
+const againBtn = document.getElementById('againBtn');
+const nextWeekBtn = document.getElementById('nextWeek');
+const shopCards = document.getElementById('shopCards');
+const shopInfo = document.getElementById('shopInfo');
+const overStats = document.getElementById('overStats');
+const muteBtn = document.getElementById('muteBtn');
+const menuBest = document.getElementById('menuBest');
+
+let S = 1;
+function resize(){
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const availW = window.innerWidth - 24, availH = window.innerHeight - 24;
+  let cssW = Math.max(320, Math.min(availW, availH * W / H));
+  const cssH = cssW * H / W;
+  cv.style.width = cssW + 'px'; cv.style.height = cssH + 'px';
+  cv.width = Math.round(cssW * dpr); cv.height = Math.round(cssH * dpr);
+  S = cv.width / W;
+}
+window.addEventListener('resize', resize);
+
+/* ============================== AUDIO ============================== */
+let AC = null, muted = false;
+function audio(){
+  if (!AC){ try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ AC = null; } }
+  if (AC && AC.state === 'suspended') AC.resume().catch(()=>{});
+  return AC;
+}
+function tone(f, d, type, g, slide){
+  if (muted) return; const ac = audio(); if (!ac) return;
+  try {
+    const o = ac.createOscillator(), v = ac.createGain();
+    o.type = type || 'sine'; o.frequency.value = f;
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, f + slide), ac.currentTime + d);
+    v.gain.setValueAtTime(g || 0.06, ac.currentTime);
+    v.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + d);
+    o.connect(v); v.connect(ac.destination); o.start(); o.stop(ac.currentTime + d);
+  } catch(e){}
+}
+function noiseBurst(d, g){
+  if (muted) return; const ac = audio(); if (!ac) return;
+  try {
+    const n = Math.floor(ac.sampleRate * d);
+    const buf = ac.createBuffer(1, n, ac.sampleRate);
+    const ch = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = ac.createBufferSource(); src.buffer = buf;
+    const flt = ac.createBiquadFilter(); flt.type = 'highpass'; flt.frequency.value = 2800;
+    const v = ac.createGain(); v.gain.value = g || 0.05;
+    src.connect(flt); flt.connect(v); v.connect(ac.destination); src.start();
+  } catch(e){}
+}
+const sfx = {
+  ding(){ tone(880,.12,'triangle',.07); setTimeout(()=>tone(1318,.16,'triangle',.07),80); },
+  soft(){ tone(660,.08,'triangle',.05); },
+  coin(){ tone(988,.07,'square',.04); setTimeout(()=>tone(1319,.12,'square',.04),70); },
+  buzz(){ tone(130,.22,'sawtooth',.05); },
+  sizzle(){ noiseBurst(.35,.05); },
+  burn(){ tone(220,.3,'sawtooth',.05,-140); }
+};
+function setMuted(m){ muted = m; muteBtn.textContent = 'Sound: ' + (m ? 'Off' : 'On'); }
+muteBtn.addEventListener('click', () => setMuted(!muted));
+
+/* ============================== DATA ============================== */
+const PRICES = { burger:20, fries:12, salad:15, drink:8 };
+const UPGRADES = [
+  { id:'grillSpeed', name:'Fast Grill',      desc:'Burgers cook 30% faster.',            cost:60 },
+  { id:'patience',   name:'Comfy Chairs',    desc:'+6s base customer patience.',         cost:60 },
+  { id:'fryerSlot',  name:'Extra Basket',    desc:'Fryer gets a 3rd basket slot.',       cost:70 },
+  { id:'comboCap',   name:'Loyalty Program', desc:'Combo multiplier cap x5 -> x7.',      cost:60 },
+  { id:'salary',     name:'Weekend Rates',   desc:'+$30 salary at the start of each week.', cost:60 }
+];
+const LS_KEY = 'restaurantru…t.v1';
+
+let state = 'menu';
+let score = 0, cash = 40, week = 1, hearts = 3, combo = 1, comboCap = 5, servedWeek = 0;
+let best = { score:0, week:1 };
+let upgrades = {}, held = null, selected = null, stepsTotal = 0, runId = 0;
+let tables = [], stations = null, particles = [], spawnT = 2, currentOffer = [];
+const mouse = { x: W/2, y: H/2 };
+
+function basePatience(){ return (30 + (upgrades.patience ? 6 : 0)) * Math.pow(0.95, week - 1); }
+function grillCook(){ return upgrades.grillSpeed ? 2.8 : 4; }
+function unlocked(){
+  const u = ['burger','drink'];
+  if (week >= 2) u.push('fries');
+  if (week >= 3) u.push('salad');
+  return u;
+}
+
+function initState(){
+  score = 0; cash = 40; week = 1; hearts = 3; combo = 1; comboCap = 5; servedWeek = 0;
+  upgrades = { grillSpeed:false, patience:false, fryerSlot:false, comboCap:false, salary:false };
+  held = null; selected = null; particles = []; spawnT = 2; stepsTotal = 0;
+  tables = [];
+  for (let r = 0; r < 3; r++)
+    for (let c = 0; c < 4; c++)
+      tables.push({ col:c, row:r, x:16 + c*232, y:74 + r*110, cust:null });
+  stations = {
+    grill: { slots:[null, null] },
+    fryer: { slots:[null, null] },
+    prep:  { bowl:[], output:null },
+    register: {}
+  };
+}
+
+/* ============================== LAYOUT ============================== */
+const SX = i => 16 + i * 232;
+const SY = 414, SH = 170;
+const inRect = (x, y, r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+function tableRect(t){ return { x:t.x + 26, y:t.y + 84, w:180, h:22 }; }
+function grillSlotRect(i){ return { x:SX(0) + 24 + i*108, y:SY + 66, w:84, h:84 }; }
+function fryerSlotRect(i){
+  const n = stations.fryer.slots.length, sw = 64, gap = 18;
+  const total = n*sw + (n-1)*gap;
+  const x0 = SX(1) + (232 - total) / 2;
+  return { x:x0 + i*(sw + gap), y:SY + 72, w:sw, h:sw };
+}
+const PREP_BTNS = {
+  lettuce:{ x:SX(2)+18,  y:SY+46,  w:58, h:58 },
+  tomato: { x:SX(2)+84,  y:SY+46,  w:58, h:58 },
+  cup:    { x:SX(2)+18,  y:SY+110, w:58, h:58 },
+  soda:   { x:SX(2)+84,  y:SY+110, w:58, h:58 }
+};
+const PREP_OUT = { x:SX(2)+152, y:SY+80, w:76, h:76 };
+const REG_RECT = { x:SX(3)+36, y:SY+56, w:160, h:92 };
+
+function checkLayout(){
+  const errs = [];
+  if (tables.length !== 12) errs.push('table count ' + tables.length);
+  for (const t of tables){
+    const r = tableRect(t);
+    if (r.x < 0 || r.y < 60 || r.x + r.w > W || r.y + r.h > SY - 4) errs.push('table out of bounds');
+  }
+  for (let c = 0; c < 4; c++){
+    if (SX(c) < 0 || SX(c) + 232 > W || SY + SH > H) errs.push('station out of bounds');
+  }
+  if (!stations || !stations.grill || !stations.fryer || !stations.prep || !stations.register) errs.push('missing station');
+  if (errs.length) console.error('RestaurantRush layout invalid:', errs);
+  return errs.length === 0;
+}
+
+/* ============================== PARTICLES ============================== */
+function spawnP(p){
+  if (particles.length >= 40) return;           // hard entity cap, enforced here
+  particles.push(Object.assign({ x:0, y:0, vx:0, vy:0, g:0, life:.6, max:.6, r:3, color:'#fff' }, p));
+}
+function burst(x, y, color, n, spread){
+  for (let k = 0; k < n; k++)
+    spawnP({ x, y, vx:(Math.random()-0.5)*(spread||120), vy:-Math.random()*110-20, g:260,
+             life:.5+Math.random()*.4, max:.9, r:2+Math.random()*2.5, color });
+}
+function smoke(x, y){
+  spawnP({ x, y, vx:(Math.random()-0.5)*12, vy:-30-Math.random()*20, g:0,
+           life:.8, max:.8, r:3+Math.random()*3, color:'rgba(180,170,160,.5)' });
+}
+
+/* ============================== CUSTOMERS ============================== */
+function spawnCustomer(tableIdx, patienceSec){
+  if (state !== 'playing') return null;
+  const free = [];
+  for (let i = 0; i < tables.length; i++) if (!tables[i].cust) free.push(i);
+  if (!free.length) return null;
+  const ti = (tableIdx != null && free.indexOf(tableIdx) >= 0) ? tableIdx : free[(Math.random()*free.length)|0];
+  const ul = unlocked();
+  let names = [ ul[(Math.random()*ul.length)|0] ];
+  if (week >= 4 && Math.random() < 0.3) names = ['burger','fries'];
+  const maxP = patienceSec != null ? patienceSec : basePatience();
+  tables[ti].cust = {
+    order: names.map(n => ({ name:n, done:false })),
+    state: 'wait', patience: maxP, maxPatience: maxP,
+    tipPool: names.reduce((s,n) => s + PRICES[n], 0) * 0.5,
+    eatT: 0, hair: (Math.random()*4)|0, shirt: (Math.random()*5)|0
+  };
+  return tables[ti];
+}
+
+function serveAt(ti){
+  if (state !== 'playing' || !held) return false;
+  const t = tables[ti]; const c = t && t.cust;
+  if (!c || c.state !== 'wait'){ sfx.buzz(); held = null; return false; }
+  const item = c.order.find(o => !o.done && o.name === held);
+  if (item){
+    item.done = true; held = null; sfx.ding();
+    burst(t.x + 116, t.y + 40, '#9fdc7f', 5, 90);
+    if (c.order.every(o => o.done)){ c.state = 'eat'; c.eatT = 2; }
+  } else {
+    c.tipPool *= 0.8; held = null; sfx.buzz();
+    burst(t.x + 116, t.y + 40, '#e05555', 4, 90);
+  }
+  return true;
+}
+
+function walkout(t){
+  t.cust = null; hearts--; combo = 1; sfx.buzz();
+  burst(t.x + 116, t.y + 50, '#e05555', 8, 140);
+  if (hearts <= 0) gameOver();
+}
+
+function collectPayments(){
+  if (state !== 'playing') return 0;
+  let n = 0, gained = 0;
+  for (const t of tables){
+    const c = t.cust;
+    if (c && c.state === 'pay'){
+      const price = c.order.reduce((s,o) => s + PRICES[o.name], 0);
+      const tip = Math.max(0, Math.round(c.tipPool * Math.max(0, c.patience / c.maxPatience)));
+      const mult = Math.min(combo, comboCap);
+      cash += price + tip; score += Math.round((price + tip) * mult);
+      servedWeek++; combo = Math.min(combo + 1, comboCap);
+      n++; gained += price + tip; t.cust = null;
+      burst(t.x + 116, t.y + 60, '#ffd35c', 7, 120);
+    }
+  }
+  if (n){ sfx.coin(); saveBest(); scheduleWeekEnd(); }
+  return n;
+}
+
+function scheduleWeekEnd(){
+  if (servedWeek < 4 + week) return;
+  const rid = runId;
+  setTimeout(() => { if (state === 'playing' && rid === runId) openShop(); }, 600);
+}
+
+/* ============================== STATIONS ============================== */
+function grillClick(i){
+  const slots = stations.grill.slots;
+  if (i == null || i < 0 || i >= slots.length) return;
+  const s = slots[i];
+  if (!s){ slots[i] = { stage:'cook', t:0 }; sfx.sizzle(); return; }
+  if (s.stage === 'good'){ held = 'burger'; slots[i] = null; sfx.soft(); return; }
+  if (s.stage === 'burn'){ slots[i] = null; const r = grillSlotRect(i); burst(r.x+42, r.y+20, '#777', 4, 60); return; }
+}
+function fryerClick(i){
+  const slots = stations.fryer.slots;
+  if (i == null || i < 0 || i >= slots.length) return;
+  const s = slots[i];
+  if (!s){ slots[i] = { stage:'cook', t:0 }; sfx.sizzle(); return; }
+  if (s.stage === 'good'){ held = 'fries'; slots[i] = null; sfx.soft(); return; }
+  if (s.stage === 'burn'){ slots[i] = null; const r = fryerSlotRect(i); burst(r.x+32, r.y+16, '#777', 4, 60); return; }
+}
+function prepClick(k){
+  const p = stations.prep;
+  if (k === 'output'){ if (p.output){ held = p.output; p.output = null; sfx.soft(); } return; }
+  if (p.bowl.length === 0){
+    if (k === 'lettuce' || k === 'tomato' || k === 'cup' || k === 'soda') p.bowl = [k];
+    return;
+  }
+  const a = p.bowl[0];
+  if (a === k){ p.bowl = []; return; }
+  if ((a === 'lettuce' && k === 'tomato') || (a === 'tomato' && k === 'lettuce')){ p.bowl = []; p.output = 'salad'; sfx.ding(); return; }
+  if ((a === 'cup' && k === 'soda') || (a === 'soda' && k === 'cup')){ p.bowl = []; p.output = 'drink'; sfx.ding(); return; }
+  p.bowl = []; sfx.buzz();
+}
+function stationClick(id, key){
+  if (state !== 'playing') return;
+  if (id === 'grill') grillClick(key);
+  else if (id === 'fryer') fryerClick(key);
+  else if (id === 'prep') prepClick(key == null ? 'output' : key);
+  else if (id === 'register') collectPayments();
+}
+
+/* ============================== SHOP ============================== */
+function openShop(){
+  state = 'shop';
+  const avail = UPGRADES.filter(u => !upgrades[u.id]);
+  const shuffled = avail.slice().sort(() => Math.random() - 0.5);
+  const pick = shuffled.slice(0, 3);
+  currentOffer = pick.concat([{ id:'cash', name:'Cash Top-Up', desc:'+ $30 right now. Always available.', cost:0 }]);
+  renderShop();
+  shopEl.classList.remove('hidden');
+}
+function buyUpgrade(idx){
+  const u = currentOffer[idx];
+  if (!u || u.bought) return false;
+  if (u.cost > 0 && cash < u.cost){ sfx.buzz(); return false; }
+  cash -= u.cost;
+  if (u.id === 'cash'){ cash += 30; }
+  else {
+    upgrades[u.id] = true;
+    if (u.id === 'fryerSlot' && stations.fryer.slots.length < 3) stations.fryer.slots.push(null);
+    if (u.id === 'comboCap') comboCap = 7;
+  }
+  u.bought = true; sfx.coin(); renderShop();
+  return true;
+}
+function renderShop(){
+  shopInfo.textContent = 'Cash: $' + cash + '  —  pick any you can afford, then start the next week.';
+  shopCards.innerHTML = '';
+  currentOffer.forEach((u, i) => {
+    const el = document.createElement('div');
+    el.className = 'card' + (u.bought ? ' off' : '') + (u.cost > 0 && cash < u.cost ? ' off' : '');
+    el.innerHTML = '<b></b><small></small><span class="cost"></span>';
+    el.children[0].textContent = u.name;
+    el.children[1].textContent = u.desc;
+    el.children[2].textContent = u.bought ? 'Purchased' : (u.cost === 0 ? 'FREE' : '$' + u.cost);
+    el.addEventListener('click', () => buyUpgrade(i));
+    shopCards.appendChild(el);
+  });
+}
+function nextWeek(){
+  if (state !== 'shop') return;
+  week++; servedWeek = 0;
+  cash += upgrades.salary ? 30 : 0;
+  spawnT = 1.2;
+  shopEl.classList.add('hidden');
+  state = 'playing';
+}
+
+/* ============================== RUN FLOW ============================== */
+function loadBest(){
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw){
+      const o = JSON.parse(raw);
+      if (o && typeof o.score === 'number' && typeof o.week === 'number'){ best = { score:o.score, week:o.week }; }
+    }
+  } catch(e){}
+}
+function saveBest(){
+  if (score > best.score || (score === best.score && week > best.week)){
+    best = { score, week };
+    try { localStorage.setItem(LS_KEY, JSON.stringify(best)); } catch(e){}
+  }
+}
+function startRun(){
+  runId++;
+  initState();
+  menuEl.classList.add('hidden');
+  shopEl.classList.add('hidden');
+  overEl.classList.add('hidden');
+  state = 'playing';
+  spawnT = 1.2;
+  sfx.ding();
+}
+function gameOver(){
+  state = 'gameover';
+  saveBest();
+  overStats.textContent = 'Final score ' + score + '  ·  reached Week ' + week + '  ·  best ' + best.score;
+  menuBest.textContent = 'Best score: ' + best.score + '  ·  best week: ' + best.week;
+  overEl.classList.remove('hidden');
+}
+function loseHeart(){ hearts--; if (hearts <= 0) gameOver(); return hearts; }
+
+/* ============================== UPDATE ============================== */
+const DT = 1/60;
+function update(){
+  stepsTotal++;
+  // particles drain in EVERY non-paused state (never freeze on overlays)
+  for (let i = particles.length - 1; i >= 0; i--){
+    const p = particles[i];
+    p.life -= DT; p.x += p.vx*DT; p.y += p.vy*DT; p.vy += p.g*DT;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+  if (state !== 'playing') return;
+
+  spawnT -= DT;
+  if (spawnT <= 0){
+    spawnCustomer();
+    spawnT = Math.max(2.2, 6 * Math.pow(0.9, week - 1)) * (0.8 + Math.random()*0.4);
+  }
+
+  for (let i = 0; i < stations.grill.slots.length; i++){
+    const s = stations.grill.slots[i]; if (!s) continue;
+    s.t += DT;
+    if (s.stage === 'cook' && s.t >= grillCook()){ s.stage = 'good'; s.t = 0; sfx.soft(); }
+    else if (s.stage === 'good' && s.t > 5){ s.stage = 'burn'; s.t = 0; sfx.burn(); }
+    else if (s.stage === 'burn' && Math.random() < 0.05){ const r = grillSlotRect(i); smoke(r.x + 42, r.y + 24); }
+  }
+  for (let i = 0; i < stations.fryer.slots.length; i++){
+    const s = stations.fryer.slots[i]; if (!s) continue;
+    s.t += DT;
+    if (s.stage === 'cook' && s.t >= 3.5){ s.stage = 'good'; s.t = 0; sfx.soft(); }
+    else if (s.stage === 'good' && s.t > 6){ s.stage = 'burn'; s.t = 0; sfx.burn(); }
+    else if (s.stage === 'burn' && Math.random() < 0.05){ const r = fryerSlotRect(i); smoke(r.x + 32, r.y + 18); }
+  }
+
+  for (const t of tables){
+    const c = t.cust; if (!c) continue;
+    if (c.state === 'wait'){
+      c.patience -= DT;
+      if (c.patience <= 0) walkout(t);
+    } else if (c.state === 'eat'){
+      c.eatT -= DT;
+      if (c.eatT <= 0) c.state = 'pay';
+    }
+  }
+}
+
+/* ============================== DRAW ============================== */
+function rr(g, x, y, w, h, r){
+  g.beginPath();
+  g.moveTo(x+r, y);
+  g.arcTo(x+w, y, x+w, y+h, r);
+  g.arcTo(x+w, y+h, x, y+h, r);
+  g.arcTo(x, y+h, x, y, r);
+  g.arcTo(x, y, x+w, y, r);
+  g.closePath();
+}
+function lerpColor(c1, c2, f){
+  f = Math.max(0, Math.min(1, f));
+  const a = [parseInt(c1.slice(1,3),16), parseInt(c1.slice(3,5),16), parseInt(c1.slice(5,7),16)];
+  const b = [parseInt(c2.slice(1,3),16), parseInt(c2.slice(3,5),16), parseInt(c2.slice(5,7),16)];
+  return 'rgb(' + a.map((v,i) => Math.round(v + (b[i]-v)*f)).join(',') + ')';
+}
+const SKINS = ['#f2c49b','#d9a06a','#b97a4e','#8a5a3a'];
+const HAIRS = ['#3d2b1d','#6b4a2c','#17120e','#a67c52'];
+const SHIRTS = ['#5b8bd0','#d05b5b','#5bbf7a','#c9a24b','#9b6bd0'];
+
+function drawDish(g, name, x, y, s){
+  if (name === 'burger'){
+    g.fillStyle = '#e8a33d'; rr(g, x-s, y+s*0.15, 2*s, s*0.55, s*0.25); g.fill();
+    g.fillStyle = '#6b3a1e'; rr(g, x-s*1.05, y-s*0.3, s*2.1, s*0.5, s*0.18); g.fill();
+    g.fillStyle = '#f0b054';
+    g.beginPath(); g.arc(x, y-s*0.25, s, Math.PI, 0); g.closePath(); g.fill();
+    g.fillStyle = '#fff3d6';
+    g.beginPath(); g.arc(x-s*0.4, y-s*0.55, s*0.08, 0, 7); g.fill();
+    g.beginPath(); g.arc(x+s*0.15, y-s*0.62, s*0.08, 0, 7); g.fill();
+  } else if (name === 'fries'){
+    g.fillStyle = '#f4c542';
+    for (let k = -2; k <= 2; k++){
+      g.fillRect(x + k*s*0.32 - s*0.09, y - s*1.05 + Math.abs(k)*s*0.12, s*0.18, s*0.9);
+    }
+    g.fillStyle = '#d95f4b';
+    g.beginPath();
+    g.moveTo(x - s*0.85, y - s*0.35); g.lineTo(x + s*0.85, y - s*0.35);
+    g.lineTo(x + s*0.62, y + s*0.75); g.lineTo(x - s*0.62, y + s*0.75);
+    g.closePath(); g.fill();
+  } else if (name === 'salad'){
+    g.fillStyle = '#5fae4e';
+    g.beginPath(); g.arc(x - s*0.35, y - s*0.35, s*0.42, 0, 7); g.fill();
+    g.beginPath(); g.arc(x + s*0.35, y - s*0.4, s*0.4, 0, 7); g.fill();
+    g.fillStyle = '#e05555';
+    g.beginPath(); g.arc(x, y - s*0.55, s*0.2, 0, 7); g.fill();
+    g.fillStyle = '#eee6d2';
+    g.beginPath(); g.arc(x, y - s*0.05, s*0.85, 0, Math.PI); g.closePath(); g.fill();
+  } else if (name === 'drink'){
+    g.fillStyle = '#e8e2d0';
+    g.beginPath();
+    g.moveTo(x - s*0.6, y - s*0.8); g.lineTo(x + s*0.6, y - s*0.8);
+    g.lineTo(x + s*0.42, y + s*0.8); g.lineTo(x - s*0.42, y + s*0.8);
+    g.closePath(); g.fill();
+    g.fillStyle = '#7a4a2c';
+    g.fillRect(x - s*0.55, y - s*0.75, s*1.1, s*0.28);
+    g.strokeStyle = '#e05555'; g.lineWidth = Math.max(1.5, s*0.12);
+    g.beginPath(); g.moveTo(x + s*0.15, y - s*1.05); g.lineTo(x + s*0.42, y - s*0.55); g.stroke();
+  }
+}
+function drawHeart(g, x, y, s, on){
+  g.save(); g.translate(x, y); g.scale(s, s);
+  g.beginPath();
+  g.moveTo(0, 2.8);
+  g.bezierCurveTo(-4.4, -0.4, -3.6, -5, 0, -2.4);
+  g.bezierCurveTo(3.6, -5, 4.4, -0.4, 0, 2.8);
+  g.closePath();
+  g.fillStyle = on ? '#e05555' : '#4a352a';
+  g.fill();
+  g.restore();
+}
+function drawTable(t){
+  const r = tableRect(t);
+  const c = t.cust;
+  const cx = t.x + 116;
+  if (c){
+    // torso + head (drawn BEFORE the table so it reads as seated behind it)
+    g_shirt(c, cx, t.y);
+  }
+  // table
+  const grad = ctx.createLinearGradient(0, r.y, 0, r.y + r.h);
+  grad.addColorStop(0, '#9a6a3a'); grad.addColorStop(1, '#7a4e28');
+  ctx.fillStyle = grad; rr(ctx, r.x, r.y, r.w, r.h, 7); ctx.fill();
+  ctx.strokeStyle = '#5b3a1e'; ctx.lineWidth = 2; rr(ctx, r.x, r.y, r.w, r.h, 7); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,240,220,.14)';
+  ctx.beginPath(); ctx.ellipse(cx, r.y + r.h/2, r.w*0.32, r.h*0.3, 0, 0, 7); ctx.fill();
+
+  if (!c) return;
+  // eating dish on table
+  if (c.state === 'eat'){
+    const first = c.order.find(o => o.done);
+    if (first) drawDish(ctx, first.name, r.x + 34, r.y + r.h/2 - 4, 11);
+  }
+  // order / pay bubble
+  if (c.state === 'pay'){
+    ctx.fillStyle = '#ffd35c'; rr(ctx, cx - 22, t.y + 1, 44, 24, 9); ctx.fill();
+    ctx.fillStyle = '#5b3a1e'; ctx.font = 'bold 16px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText('$', cx, t.y + 18);
+    ctx.textAlign = 'left';
+  } else {
+    const nItems = c.order.length;
+    const bw = nItems * 32 + 16;
+    ctx.fillStyle = '#fffaf0'; rr(ctx, cx - bw/2, t.y, bw, 26, 9); ctx.fill();
+    ctx.strokeStyle = '#c9b58e'; ctx.lineWidth = 1.5; rr(ctx, cx - bw/2, t.y, bw, 26, 9); ctx.stroke();
+    c.order.forEach((o, k) => {
+      const ix = cx - bw/2 + 20 + k*32;
+      ctx.save();
+      if (o.done) ctx.globalAlpha = 0.35;
+      drawDish(ctx, o.name, ix, t.y + 14, 9);
+      ctx.restore();
+      if (o.done){
+        ctx.strokeStyle = '#3f9d4f'; ctx.lineWidth = 2.5;
+        ctx.beginPath(); ctx.moveTo(ix - 6, t.y + 14); ctx.lineTo(ix - 1, t.y + 19); ctx.lineTo(ix + 7, t.y + 7); ctx.stroke();
+      }
+    });
+    // patience bar
+    const frac = Math.max(0, Math.min(1, c.patience / c.maxPatience));
+    ctx.fillStyle = '#2a1c10'; rr(ctx, cx - 34, t.y + 31, 68, 7, 3.5); ctx.fill();
+    if (frac > 0.01){
+      ctx.fillStyle = 'hsl(' + Math.round(120*frac) + ',70%,45%)';
+      rr(ctx, cx - 34, t.y + 31, 68*frac, 7, 3.5); ctx.fill();
+    }
+  }
+}
+function g_shirt(c, cx, ty){
+  const frac = Math.max(0, Math.min(1, c.patience / c.maxPatience));
+  ctx.fillStyle = SHIRTS[c.shirt];
+  rr(ctx, cx - 15, ty + 64, 30, 26, 9); ctx.fill();
+  ctx.fillStyle = SKINS[c.hair];
+  ctx.beginPath(); ctx.arc(cx, ty + 55, 12, 0, 7); ctx.fill();
+  ctx.fillStyle = HAIRS[c.hair];
+  ctx.beginPath(); ctx.arc(cx, ty + 51, 12, Math.PI, 0); ctx.closePath(); ctx.fill();
+  // face
+  ctx.fillStyle = '#2a1c10';
+  ctx.beginPath(); ctx.arc(cx - 4, ty + 55, 1.5, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx + 4, ty + 55, 1.5, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#2a1c10'; ctx.lineWidth = 1.6;
+  ctx.beginPath();
+  if (c.state === 'eat'){ ctx.arc(cx, ty + 62, 3, 0, 7); }
+  else if (frac > 0.55){ ctx.arc(cx, ty + 60, 4, 0.2, Math.PI - 0.2); }
+  else if (frac > 0.3){ ctx.moveTo(cx - 4, ty + 62); ctx.lineTo(cx + 4, ty + 62); }
+  else { ctx.arc(cx, ty + 66, 4, Math.PI + 0.3, -0.3); }
+  ctx.stroke();
+}
+function drawStationPanel(cIdx){
+  const ids = ['grill','fryer','prep','register'];
+  const names = ['GRILL  [1]','FRYER  [2]','PREP  [3]','REGISTER  [4]'];
+  const x = SX(cIdx);
+  ctx.fillStyle = '#2b2117'; rr(ctx, x, SY, 232, SH, 12); ctx.fill();
+  ctx.strokeStyle = selected === ids[cIdx] ? '#ffb454' : '#453321';
+  ctx.lineWidth = selected === ids[cIdx] ? 3 : 1.5;
+  rr(ctx, x, SY, 232, SH, 12); ctx.stroke();
+  ctx.fillStyle = '#b7a68e'; ctx.font = 'bold 13px system-ui';
+  ctx.fillText(names[cIdx], x + 14, SY + 24);
+
+  if (cIdx === 0) drawGrill();
+  else if (cIdx === 1) drawFryer();
+  else if (cIdx === 2) drawPrep();
+  else drawRegister();
+}
+function drawGrill(){
+  for (let i = 0; i < 2; i++){
+    const r = grillSlotRect(i);
+    ctx.fillStyle = '#191108'; rr(ctx, r.x, r.y, r.w, r.h, 10); ctx.fill();
+    ctx.strokeStyle = '#3a2b1d'; ctx.lineWidth = 2;
+    for (let k = 1; k < 4; k++){
+      ctx.beginPath(); ctx.moveTo(r.x + 8, r.y + k*r.h/4); ctx.lineTo(r.x + r.w - 8, r.y + k*r.h/4); ctx.stroke();
+    }
+    const s = stations.grill.slots[i];
+    if (!s) continue;
+    const cx = r.x + r.w/2, cy = r.y + r.h/2;
+    let col;
+    if (s.stage === 'cook') col = lerpColor('#d9737a', '#8a4a2c', s.t / grillCook());
+    else if (s.stage === 'good') col = '#7a4426';
+    else col = '#17120e';
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.ellipse(cx, cy, 26, 18, 0, 0, 7); ctx.fill();
+    if (s.stage === 'good'){
+      const pulse = 0.55 + 0.35 * Math.sin(performance.now()/180);
+      ctx.strokeStyle = 'rgba(159,220,127,' + pulse + ')'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(cx, cy, 32, 24, 0, 0, 7); ctx.stroke();
+    }
+    if (s.stage === 'burn'){
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(cx, cy, 26, 18, 0, 0, 7); ctx.stroke();
+    }
+  }
+}
+function drawFryer(){
+  for (let i = 0; i < stations.fryer.slots.length; i++){
+    const r = fryerSlotRect(i);
+    ctx.fillStyle = '#3d3d42'; rr(ctx, r.x, r.y, r.w, r.h, 8); ctx.fill();
+    ctx.strokeStyle = '#26262a'; ctx.lineWidth = 1.5;
+    for (let k = 1; k < 4; k++){
+      ctx.beginPath(); ctx.moveTo(r.x + 4, r.y + k*r.h/4); ctx.lineTo(r.x + r.w - 4, r.y + k*r.h/4); ctx.stroke();
+    }
+    const s = stations.fryer.slots[i];
+    if (!s) continue;
+    let col, fill;
+    if (s.stage === 'cook'){ col = '#e8dcae'; fill = 0.25 + 0.65 * (s.t / 3.5); }
+    else if (s.stage === 'good'){ col = '#f4c542'; fill = 0.9; }
+    else { col = '#241c10'; fill = 0.9; }
+    ctx.fillStyle = col;
+    for (let k = 0; k < 4; k++){
+      const sx = r.x + 8 + k*(r.w - 16)/3.4;
+      const sh = (r.h - 16) * fill;
+      ctx.fillRect(sx, r.y + r.h - 8 - sh, (r.w-16)/5, sh);
+    }
+    if (s.stage === 'good'){
+      const pulse = 0.55 + 0.35 * Math.sin(performance.now()/180);
+      ctx.strokeStyle = 'rgba(159,220,127,' + pulse + ')'; ctx.lineWidth = 3;
+      rr(ctx, r.x - 3, r.y - 3, r.w + 6, r.h + 6, 10); ctx.stroke();
+    }
+  }
+}
+function drawPrep(){
+  for (const k in PREP_BTNS){
+    const r = PREP_BTNS[k];
+    ctx.fillStyle = '#3a2b1d'; rr(ctx, r.x, r.y, r.w, r.h, 9); ctx.fill();
+    const cx = r.x + r.w/2, cy = r.y + r.h/2;
+    if (k === 'lettuce'){
+      ctx.fillStyle = '#5fae4e';
+      ctx.beginPath(); ctx.arc(cx - 6, cy + 2, 9, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(cx + 6, cy - 2, 10, 0, 7); ctx.fill();
+    } else if (k === 'tomato'){
+      ctx.fillStyle = '#e05555'; ctx.beginPath(); ctx.arc(cx, cy + 2, 11, 0, 7); ctx.fill();
+      ctx.strokeStyle = '#3f9d4f'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(cx, cy - 9); ctx.lineTo(cx, cy - 14); ctx.stroke();
+    } else if (k === 'cup'){
+      ctx.strokeStyle = '#e8e2d0'; ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(cx - 8, cy - 11); ctx.lineTo(cx + 8, cy - 11);
+      ctx.lineTo(cx + 5, cy + 12); ctx.lineTo(cx - 5, cy + 12); ctx.closePath(); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#5b8bd0';
+      ctx.beginPath(); ctx.arc(cx, cy + 2, 11, 0, 7); ctx.fill();
+      ctx.fillStyle = '#a8cdf5';
+      ctx.beginPath(); ctx.arc(cx - 3, cy - 1, 4, 0, 7); ctx.fill();
+    }
+    ctx.fillStyle = '#8a7a63'; ctx.font = '10px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(k.toUpperCase(), cx, r.y + r.h - 4);
+    ctx.textAlign = 'left';
+  }
+  // bowl indicator
+  ctx.fillStyle = '#d8cfba';
+  ctx.beginPath(); ctx.arc(SX(2) + 190, SY + 40, 11, 0, Math.PI); ctx.closePath(); ctx.fill();
+  const b = stations.prep.bowl;
+  if (b.length){
+    ctx.fillStyle = b[0] === 'lettuce' ? '#5fae4e' : b[0] === 'tomato' ? '#e05555' : b[0] === 'cup' ? '#e8e2d0' : '#5b8bd0';
+    ctx.beginPath(); ctx.arc(SX(2) + 190, SY + 36, 5, 0, 7); ctx.fill();
+  }
+  // output
+  ctx.fillStyle = '#191108'; rr(ctx, PREP_OUT.x, PREP_OUT.y, PREP_OUT.w, PREP_OUT.h, 10); ctx.fill();
+  if (stations.prep.output){
+    drawDish(ctx, stations.prep.output, PREP_OUT.x + 38, PREP_OUT.y + 40, 17);
+    const pulse = 0.55 + 0.35 * Math.sin(performance.now()/180);
+    ctx.strokeStyle = 'rgba(159,220,127,' + pulse + ')'; ctx.lineWidth = 3;
+    rr(ctx, PREP_OUT.x - 3, PREP_OUT.y - 3, PREP_OUT.w + 6, PREP_OUT.h + 6, 12); ctx.stroke();
+  }
+}
+function drawRegister(){
+  const r = REG_RECT;
+  const ready = tables.reduce((n,t) => n + (t.cust && t.cust.state === 'pay' ? 1 : 0), 0);
+  const grad = ctx.createLinearGradient(0, r.y, 0, r.y + r.h);
+  grad.addColorStop(0, ready > 0 ? '#ffd35c' : '#b98a45');
+  grad.addColorStop(1, ready > 0 ? '#d9a02e' : '#8a6530');
+  ctx.fillStyle = grad; rr(ctx, r.x, r.y, r.w, r.h, 12); ctx.fill();
+  ctx.strokeStyle = '#5b3a1e'; ctx.lineWidth = 2; rr(ctx, r.x, r.y, r.w, r.h, 12); ctx.stroke();
+  ctx.fillStyle = '#2a1a08'; ctx.font = 'bold 34px system-ui'; ctx.textAlign = 'center';
+  ctx.fillText('$', r.x + r.w/2, r.y + r.h/2 + 12);
+  ctx.font = 'bold 12px system-ui';
+  ctx.fillText(ready > 0 ? 'COLLECT (' + ready + ')' : 'no payments', r.x + r.w/2, r.y + r.h - 12);
+  ctx.textAlign = 'left';
+  if (ready > 0){
+    const pulse = 2 + Math.sin(performance.now()/150) * 2;
+    ctx.fillStyle = '#3f9d4f';
+    ctx.beginPath(); ctx.arc(r.x + r.w, r.y, 14 + pulse, 0, 7); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 14px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(String(ready), r.x + r.w, r.y + 5);
+    ctx.textAlign = 'left';
+  }
+}
+function drawHUD(){
+  ctx.fillStyle = '#1c1410'; ctx.fillRect(0, 0, W, 60);
+  ctx.strokeStyle = '#3d2f20'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, 60.5); ctx.lineTo(W, 60.5); ctx.stroke();
+  ctx.font = 'bold 17px system-ui';
+  ctx.fillStyle = '#ffb454'; ctx.fillText('SCORE ' + score, 18, 37);
+  ctx.fillStyle = '#9fdc7f'; ctx.fillText('$' + cash, 200, 37);
+  ctx.fillStyle = '#d9c8b0'; ctx.fillText('WEEK ' + week, 300, 37);
+  for (let k = 0; k < 3; k++) drawHeart(ctx, 430 + k*26, 31, 3.2, k < hearts);
+  ctx.fillStyle = combo > 1 ? '#ff9a3d' : '#8a7a63';
+  ctx.fillText('COMBO x' + combo, 530, 37);
+  ctx.fillStyle = '#8a7a63';
+  ctx.fillText('BEST ' + best.score, 680, 37);
+}
+function draw(){
+  ctx.setTransform(S, 0, 0, S, 0, 0);
+  const g1 = ctx.createLinearGradient(0, 0, 0, H);
+  g1.addColorStop(0, '#33251a'); g1.addColorStop(1, '#241a12');
+  ctx.fillStyle = g1; ctx.fillRect(0, 0, W, H);
+  // subtle floor tiles in dining area
+  ctx.fillStyle = 'rgba(255,220,180,.025)';
+  for (let r = 0; r < 3; r++)
+    for (let c = 0; c < 4; c++)
+      if ((r + c) % 2 === 0) ctx.fillRect(16 + c*232, 74 + r*110, 232, 110);
+
+  for (const t of tables) drawTable(t);
+  for (let c = 0; c < 4; c++) drawStationPanel(c);
+  drawHUD();
+  if (held && state === 'playing'){
+    drawDish(ctx, held, mouse.x, mouse.y + Math.sin(performance.now()/150)*3, 13);
+  }
+}
+
+/* ============================== INPUT ============================== */
+function toLogical(e){
+  const r = cv.getBoundingClientRect();
+  return { x:(e.clientX - r.left) * W / r.width, y:(e.clientY - r.top) * H / r.height };
+}
+function hitTest(x, y){
+  for (let c = 0; c < 4; c++){
+    const sx = SX(c);
+    if (x >= sx && x < sx + 232 && y >= SY && y < SY + SH){
+      if (c === 0){
+        for (let i = 0; i < 2; i++) if (inRect(x, y, grillSlotRect(i))) return { type:'station', id:'grill', key:i };
+      } else if (c === 1){
+        for (let i = 0; i < stations.fryer.slots.length; i++)
+          if (inRect(x, y, fryerSlotRect(i))) return { type:'station', id:'fryer', key:i };
+      } else if (c === 2){
+        for (const k in PREP_BTNS) if (inRect(x, y, PREP_BTNS[k])) return { type:'station', id:'prep', key:k };
+        if (inRect(x, y, PREP_OUT)) return { type:'station', id:'prep', key:'output' };
+      } else if (c === 3){
+        if (inRect(x, y, REG_RECT)) return { type:'station', id:'register' };
+      }
+      return null;
+    }
+  }
+  for (let i = 0; i < tables.length; i++){
+    const t = tables[i];
+    if (x >= t.x && x < t.x + 232 && y >= t.y && y < t.y + 110) return { type:'table', i };
+  }
+  return null;
+}
+cv.addEventListener('pointerdown', e => {
+  audio();
+  if (state !== 'playing') return;
+  const p = toLogical(e); mouse.x = p.x; mouse.y = p.y;
+  const hit = hitTest(p.x, p.y);
+  if (!hit){ held = null; return; }
+  if (hit.type === 'station') stationClick(hit.id, hit.key);
+});
+cv.addEventListener('pointermove', e => {
+  const p = toLogical(e); mouse.x = p.x; mouse.y = p.y;
+});
+cv.addEventListener('pointerup', e => {
+  if (state !== 'playing') return;
+  const p = toLogical(e); mouse.x = p.x; mouse.y = p.y;
+  const hit = hitTest(p.x, p.y);
+  if (hit && hit.type === 'table') serveAt(hit.i);
+});
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space'){
+    e.preventDefault();
+    if (state === 'playing' && held){
+      const i = tables.findIndex(t => t.cust && t.cust.state === 'wait' && t.cust.order.some(o => !o.done && o.name === held));
+      if (i >= 0) serveAt(i);
+    }
+    return;
+  }
+  if (e.key === 'Escape'){ held = null; selected = null; return; }
+  if (e.key === 'm' || e.key === 'M'){ setMuted(!muted); return; }
+  if (state === 'playing'){
+    if (e.key === '1') selected = 'grill';
+    else if (e.key === '2') selected = 'fryer';
+    else if (e.key === '3') selected = 'prep';
+    else if (e.key === '4') selected = 'register';
+  }
+  if (e.key === 'Enter' && state === 'gameover') startRun();
+});
+
+startBtn.addEventListener('click', () => { if (state !== 'playing') startRun(); });
+againBtn.addEventListener('click', () => { if (state === 'gameover') startRun(); });
+nextWeekBtn.addEventListener('click', nextWeek);
+
+/* ============================== LOOP ============================== */
+let __paused = false, last = performance.now(), acc = 0;
+const STEP_MS = 1000/60;
+function frameLoop(now){
+  requestAnimationFrame(frameLoop);
+  if (__paused){ last = now; return; }
+  let el = now - last; last = now;
+  if (el > 250) el = 250;
+  acc += el;
+  while (acc >= STEP_MS){ update(); acc -= STEP_MS; }
+  draw();
+}
+
+/* ============================== TEST HOOKS ============================== */
+window.game = {
+  tick(n){ for (let i = 0; i < n; i++) update(); },
+  step(n){ for (let i = 0; i < n; i++){ update(); draw(); } },
+  pause(){ __paused = true; },
+  resume(){ __paused = false; last = performance.now(); },
+  get state(){ return state; },
+  get score(){ return score; },
+  get cash(){ return cash; },
+  get week(){ return week; },
+  get hearts(){ return hearts; },
+  get combo(){ return combo; },
+  get comboCap(){ return comboCap; },
+  get servedWeek(){ return servedWeek; },
+  get tables(){ return tables; },
+  get stations(){ return stations; },
+  get particles(){ return particles; },
+  get best(){ return best; },
+  get held(){ return held; },
+  get steps(){ return stepsTotal; },
+  get offer(){ return currentOffer; },
+  get layoutOK(){ return checkLayout(); },
+  get unlocked(){ return unlocked(); },
+  spawnCustomer,
+  finishStation(id){
+    const st = stations[id];
+    if (st && st.slots){
+      for (const s of st.slots){
+        if (s && s.stage === 'cook'){ s.stage = 'good'; s.t = 0; return true; }
+      }
+    }
+    return false;
+  },
+  burnGrill(){
+    for (const s of stations.grill.slots){
+      if (s && (s.stage === 'cook' || s.stage === 'good')){ s.stage = 'burn'; s.t = 0; return true; }
+    }
+    stations.grill.slots[0] = { stage:'burn', t:0 };
+    return true;
+  },
+  setPatience(i, v){
+    const t = tables[i];
+    if (!t || !t.cust) return false;
+    t.cust.patience = v; return true;
+  },
+  giveCash(n){ cash += n; return cash; },
+  addScore(n){ score += n; saveBest(); return score; },
+  setUpgradesAll(){
+    for (const u of UPGRADES) upgrades[u.id] = true;
+    comboCap = 7;
+    while (stations.fryer.slots.length < 3) stations.fryer.slots.push(null);
+  },
+  forceWeekEnd(){ if (state === 'playing'){ openShop(); return true; } return false; },
+  loseHeart(){ return loseHeart(); },
+  serveDish(i, dish){ held = dish; return serveAt(i); },
+  collectPayments,
+  buyUpgrade,
+  nextWeek,
+  stationClick,
+  startRun
+};
+
+/* ============================== BOOT ============================== */
+resize();
+loadBest();
+initState();
+state = 'menu';
+menuBest.textContent = best.score ? ('Best score: ' + best.score + '  ·  best week: ' + best.week) : '';
+checkLayout();
+requestAnimationFrame(frameLoop);
+})();
+</script>
+</body>
+</html>

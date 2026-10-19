@@ -14,12 +14,25 @@ games/          ← one HTML file per game, no build step, no dependencies
 1. Drop the game as a single HTML file into `games/` (e.g. `games/snake.html`).
 2. In `index.html`, find the `GAMES` registry and set that game's `status` to `"play"`
    (or add a new entry with `title`, `icon`, `desc`, `file`, `type`, `status`).
-3. Add the **🕹️ Menu** pill (returns to the dashboard) to the new game: list it in the
-   `CFG` table of `tools/inject_dashboard_menu.py` — pick the corner whose HUD is free
-   (`corner: "tl"|"tr"|"bl"|"br"`, or `hud: <fraction of canvas height>` /
-   `fit: (LW, LH, y)` when the game paints its HUD on the canvas) — then run
-   `python3 tools/inject_dashboard_menu.py`. It is idempotent and only ever adds a block
-   between `<!-- DEVAI-MENU:BEGIN -->` / `END`.
+3. Add the shared **in-game chrome** — the `🕹️ Menu` pill (back to the dashboard) and the
+   `🗑 Clear` button (wipes that game's saved data) — by adding the game to the `CFG`
+   table of `tools/inject_dashboard_menu.py`, then running
+   `python3 tools/inject_dashboard_menu.py`. It is idempotent and byte-stable: it only
+   ever rewrites the block between `<!-- DEVAI-MENU:BEGIN -->` / `END`.
+   - `corner: "tl"|"tr"|"bl"|"br"` picks the corner whose HUD is free. When a game paints
+     its HUD on the canvas, use `hud: <fraction of canvas height>` or
+     `fit: (LW, LH, y)` (for a letterboxed `contain`-fit canvas) so the row parks just
+     below that band instead of over it.
+   - `keys` / `pref` are that game's own `localStorage` key names / prefixes. The Clear
+     button deletes **only** those, so no game can wipe another's records; a prefix that
+     could match another game's key makes the script refuse to run.
 4. Done — the dashboard picks the game up automatically.
+
+## Saved data
+
+Scores and settings are kept in `localStorage`, per game and per browser. The `🗑 Clear`
+button in every game deletes that game's own keys and reloads — it asks first
+(`⚠ Sure?`, two clicks), and never touches another game's data. A game that stores
+nothing reports `∅ Nothing saved`.
 
 No server required; everything runs from `file://` or any static host (GitHub Pages works).

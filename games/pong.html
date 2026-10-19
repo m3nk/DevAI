@@ -91,27 +91,123 @@
 <body>
 <!-- DEVAI-MENU:BEGIN -->
 <style>
-  #devai-home{position:fixed;z-index:2147483000;left:10px;top:10px;
-    display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;
-    white-space:nowrap;font:600 12px/1 "Segoe UI",system-ui,-apple-system,sans-serif;
-    letter-spacing:.4px;text-decoration:none;color:var(--da-fg,#dfe6f5);
+  #devai-tools{position:fixed;z-index:2147483000;left:10px;top:10px;display:flex;gap:8px;
+    align-items:center;flex-wrap:wrap;max-width:calc(100vw - 20px)}
+  #devai-tools a,#devai-tools button{display:inline-flex;align-items:center;gap:6px;
+    padding:6px 12px;border-radius:999px;white-space:nowrap;
+    font:600 12px/1 "Segoe UI",system-ui,-apple-system,sans-serif;letter-spacing:.4px;
+    text-decoration:none;color:var(--da-fg,#dfe6f5);
     background:var(--da-bg,rgba(10,14,24,.62));border:1px solid var(--da-bd,rgba(108,140,255,.45));
     box-shadow:0 4px 14px rgba(0,0,0,.35);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
-    opacity:.72;transition:opacity .15s ease,transform .15s ease,background .15s ease;
-    user-select:none;-webkit-user-select:none;touch-action:manipulation;cursor:pointer}
-  #devai-home:hover,#devai-home:focus-visible{opacity:1;transform:translateY(-1px);
+    opacity:.72;transition:opacity .15s ease,transform .15s ease,background .15s ease,color .15s ease;
+    user-select:none;-webkit-user-select:none;touch-action:manipulation;cursor:pointer;
+    -webkit-appearance:none;appearance:none;font-family:inherit}
+  #devai-tools a:hover,#devai-tools button:hover,#devai-tools a:focus-visible,
+  #devai-tools button:focus-visible{opacity:1;transform:translateY(-1px);
     background:var(--da-bgh,rgba(28,38,68,.92))}
-  #devai-home:active{transform:translateY(0)}
-  #devai-home .da-i{font-size:14px;line-height:1}
-  @media (max-width:560px){#devai-home{padding:8px 11px}}
-  #devai-home{--da-fg:#cfeeff;--da-bd:rgba(34,211,238,.45)}
+  #devai-tools a:active,#devai-tools button:active{transform:translateY(0)}
+  #devai-tools .da-i{font-size:14px;line-height:1}
+  #devai-clear.arm{opacity:1;color:#ffd9d9;border-color:rgba(255,107,107,.85);
+    background:rgba(96,20,26,.82)}
+  #devai-clear.done{opacity:1;color:#d6ffe9;border-color:rgba(61,220,151,.8);
+    background:rgba(16,68,48,.85)}
+  @media (max-width:560px){#devai-tools a,#devai-tools button{padding:8px 11px}}
+  #devai-tools{--da-fg:#cfeeff;--da-bd:rgba(34,211,238,.45)}
 </style>
-<a id="devai-home" href="../index.html" title="Back to the DevAI Arcade dashboard &#8212; pick another game"><span class="da-i">&#127918;</span><span class="da-t">Menu</span></a>
+<div id="devai-tools">
+  <a id="devai-home" href="../index.html" title="Back to the DevAI Arcade dashboard &#8212; pick another game"><span class="da-i">&#127918;</span><span class="da-t">Menu</span></a>
+  <button id="devai-clear" type="button" title="Delete this game&#39;s saved data &#8212; this game keeps none right now"><span class="da-i">&#128465;</span><span class="da-t">Clear</span></button>
+</div>
+<script>
+(function(){
+  var T=document.getElementById('devai-tools'),B=document.getElementById('devai-clear'),
+      CFG={hud:0,fitW:0,fitH:0,fitY:0},KEYS=[],PREF=[],t,armT,armed=0;
 
+  /* ---- keep these controls' events out of the game's own input handlers ----
+     NB: stopPropagation() in the window CAPTURE phase also prevents the target's
+     own listeners, so the button's action must run here, not on the button.
+     (The Menu link still navigates: that is a default action, not a listener.) */
+  ['pointerdown','mousedown','mouseup','pointerup','dblclick','touchstart','touchend','contextmenu']
+    .forEach(function(ev){window.addEventListener(ev,function(e){
+      if(T&&T.contains(e.target))e.stopPropagation();
+    },true);});
+  window.addEventListener('click',function(e){
+    if(!T||!T.contains(e.target))return;
+    e.stopPropagation();
+    var b=e.target.closest?e.target.closest('#devai-clear'):null;
+    if(b)clearClicked();
+  },true);
+  // Space/Enter on a focused control must not shoot/flap/place a tower
+  ['keydown','keyup'].forEach(function(ev){window.addEventListener(ev,function(e){
+    if(T&&T.contains(document.activeElement)&&(e.key===' '||e.key==='Enter'))e.stopPropagation();
+  },true);});
+
+  /* ---- clear this game's saved data ---- */
+  function label(html){B.innerHTML=html;}
+  function disarm(){armed=0;clearTimeout(armT);B.classList.remove('arm');
+    label('<span class="da-i">&#128465;</span><span class="da-t">Clear</span>');}
+  function wipe(){
+    var gone=[];
+    try{
+      var all=[];
+      for(var i=0;i<localStorage.length;i++){var k=localStorage.key(i);if(k)all.push(k);}
+      all.forEach(function(k){
+        var hit=KEYS.indexOf(k)>=0;
+        if(!hit)for(var j=0;j<PREF.length;j++)if(k.indexOf(PREF[j])===0){hit=true;break;}
+        if(hit){try{localStorage.removeItem(k);gone.push(k);}catch(e){}}
+      });
+    }catch(e){}
+    return gone;
+  }
+  function lockWrites(){
+    // Some games re-save from memory on pagehide/timer; without this the keys
+    // we just deleted come back to life on the reload.
+    try{ Storage.prototype.setItem=function(){/* dropped: cleared this session */}; }catch(e){}
+  }
+  function clearClicked(){
+    if(!armed){
+      armed=1;B.classList.add('arm');
+      label('<span class="da-i">&#9888;</span><span class="da-t">Sure?</span>');
+      armT=setTimeout(disarm,3500);
+      return;
+    }
+    clearTimeout(armT);
+    var gone=wipe();
+    B.classList.remove('arm');B.classList.add('done');
+    label(gone.length?'<span class="da-i">&#10003;</span><span class="da-t">Cleared '+gone.length+'</span>'
+                     :'<span class="da-i">&#8709;</span><span class="da-t">Nothing saved</span>');
+    if(gone.length){ lockWrites(); setTimeout(function(){location.reload();},700); }
+    else setTimeout(disarm,1500);
+  }
+
+  /* ---- placement: games that paint their HUD on the canvas park below it ---- */
+  function place(){
+    if(!T||(!CFG.hud&&!CFG.fitW))return;
+    var vw=window.innerWidth,vh=window.innerHeight,c=document.querySelector('canvas');
+    var cr=c?c.getBoundingClientRect():{x:0,y:0,width:vw,height:vh};
+    var h=T.offsetHeight||28,y;
+    if(CFG.fitW){
+      // playfield is contain-fit INSIDE a full-bleed canvas: map logical y to the screen
+      var f=Math.min(cr.width/CFG.fitW,cr.height/CFG.fitH);
+      y=cr.y+(cr.height-CFG.fitH*f)/2+CFG.fitY*f+6;
+    }else{
+      y=cr.y+cr.height*CFG.hud+6;
+    }
+    T.style.top=Math.round(Math.max(4,Math.min(y,vh-h-4)))+'px';
+    T.style.bottom='auto';
+  }
+  // never schedule with requestAnimationFrame: a background tab receives zero frames
+  function queue(){clearTimeout(t);t=setTimeout(place,50);}
+  window.addEventListener('resize',queue);
+  window.addEventListener('orientationchange',function(){setTimeout(place,150);});
+  document.addEventListener('visibilitychange',function(){if(!document.hidden)place();});
+  function c0(){return document.querySelector('canvas');}
+  if(window.ResizeObserver&&c0()){try{new ResizeObserver(queue).observe(c0());}catch(e){}}
+  place();setTimeout(place,300);
+  if(document.readyState!=='complete')window.addEventListener('load',function(){place();setTimeout(place,300);});
+})();
+</script>
 <!-- DEVAI-MENU:END -->
-
-
-
 
 
 <div id="stage">

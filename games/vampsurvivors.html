@@ -54,6 +54,31 @@
 </style>
 </head>
 <body>
+<!-- DEVAI-MENU:BEGIN -->
+<style>
+  #devai-home{position:fixed;z-index:2147483000;left:10px;bottom:46px;
+    display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:999px;
+    white-space:nowrap;font:600 12px/1 "Segoe UI",system-ui,-apple-system,sans-serif;
+    letter-spacing:.4px;text-decoration:none;color:var(--da-fg,#dfe6f5);
+    background:var(--da-bg,rgba(10,14,24,.62));border:1px solid var(--da-bd,rgba(108,140,255,.45));
+    box-shadow:0 4px 14px rgba(0,0,0,.35);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    opacity:.72;transition:opacity .15s ease,transform .15s ease,background .15s ease;
+    user-select:none;-webkit-user-select:none;touch-action:manipulation;cursor:pointer}
+  #devai-home:hover,#devai-home:focus-visible{opacity:1;transform:translateY(-1px);
+    background:var(--da-bgh,rgba(28,38,68,.92))}
+  #devai-home:active{transform:translateY(0)}
+  #devai-home .da-i{font-size:14px;line-height:1}
+  @media (max-width:560px){#devai-home{padding:8px 11px}}
+  
+</style>
+<a id="devai-home" href="../index.html" title="Back to the DevAI Arcade dashboard &#8212; pick another game"><span class="da-i">&#127918;</span><span class="da-t">Menu</span></a>
+
+<!-- DEVAI-MENU:END -->
+
+
+
+
+
 <canvas id="gc"></canvas>
 
 <div id="hud">

@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gas Station Tycoon</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#0b0e13;overflow:hidden;
+    font-family:system-ui,"Segoe UI",Arial,sans-serif;user-select:none}
+  #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+  canvas{display:block;background:#0b0e13}
+  .btn{background:#1d4ed8;color:#fff;border:0;border-radius:8px;padding:8px 14px;font-size:14px;
+    cursor:pointer;font-weight:600}
+  .btn:hover{background:#2f63ec}
+  .btn:disabled{background:#3a4453;color:#8a94a3;cursor:not-allowed}
+  #ui{position:fixed;left:10px;bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;z-index:5}
+  #ui .lbl{color:#ffd76a;font-size:14px;font-weight:700;min-width:64px;text-align:center}
+  #muteBtn{position:fixed;right:10px;top:10px;z-index:6}
+  #overlay{position:fixed;inset:0;background:rgba(5,8,14,.84);display:flex;align-items:center;
+    justify-content:center;z-index:10}
+  #panelBox{background:#141c26;border:2px solid #3a4a5c;border-radius:14px;padding:28px 36px;
+    color:#dfe9f2;text-align:center;max-width:560px}
+  #panelBox h1{margin:0 0 12px;color:#ffd76a;font-size:34px;letter-spacing:1px}
+  #ovLines div{margin:4px 0;font-size:15px;color:#aebccd}
+  #startBtn{margin-top:18px;font-size:20px;padding:10px 42px}
+  #pauseOv{position:fixed;inset:0;background:rgba(5,8,14,.62);z-index:8;display:flex;
+    align-items:center;justify-content:center;pointer-events:none}
+  #pauseOv div{color:#dfe9f2;font-size:40px;font-weight:800;letter-spacing:4px}
+  #shop{position:fixed;inset:0;background:rgba(5,8,14,.72);z-index:9;display:flex;
+    align-items:center;justify-content:center}
+  #shopBox{width:580px;max-height:88vh;overflow-y:auto;background:#151d27;
+    border:2px solid #3a4a5c;border-radius:12px;padding:16px 20px;color:#dfe9f2}
+  #shopBox h2{margin:2px 0 10px;color:#ffd76a}
+  .shopRow{display:flex;justify-content:space-between;align-items:center;
+    border-bottom:1px solid #26313e;padding:8px 2px;gap:12px}
+  .shopRow.dim{opacity:.45}
+  .shopRow .nm{font-weight:700}
+  .shopRow .lv{color:#8fd4a0;font-size:12px;margin-left:6px}
+  .shopRow .ds{font-size:12px;color:#93a3b5}
+  #shopMsg{margin:10px 2px;color:#ffb46b;font-size:14px;min-height:18px}
+  .hidden{display:none!important}
+  #errDiv{position:fixed;top:8px;left:8px;right:8px;background:#611;background:#5a1010;color:#fff;
+    padding:12px;font-family:monospace;font-size:13px;z-index:99;white-space:pre-wrap;border-radius:8px}
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game"></canvas></div>
+
+<div id="ui">
+  <button class="btn" id="shopBtn">&#128736; Shop</button>
+  <button class="btn" id="orderBtn">&#128666; Order Tanker</button>
+  <button class="btn" id="emergencyBtn">&#9889; Emergency +200L</button>
+  <button class="btn" id="priceDown">&#8722;</button>
+  <span class="lbl" id="priceVal">$3.60</span>
+  <button class="btn" id="priceUp">+</button>
+  <input type="range" id="priceSlider" min="1" max="9.99" step="0.01" value="3.6" aria-label="retail price">
+</div>
+<button class="btn" id="muteBtn">&#128266;</button>
+
+<div id="pauseOv" class="hidden"><div>PAUSED &#8212; press P</div></div>
+
+<div id="shop" class="hidden">
+  <div id="shopBox">
+    <h2>Upgrade Shop</h2>
+    <div id="shopRows"></div>
+    <div id="shopMsg"></div>
+    <button class="btn" id="shopClose">Close</button>
+  </div>
+</div>
+
+<div id="overlay">
+  <div id="panelBox">
+    <h1 id="ovTitle">GAS STATION TYCOON</h1>
+    <div id="ovLines"></div>
+    <button class="btn" id="startBtn">START</button>
+  </div>
+</div>
+
+<div id="errDiv" class="hidden"></div>
+
+<script>
+'use strict';
+/* ================= Gas Station Tycoon =================
+ * Single-file, zero-dependency tycoon game.
+ * Fixed-timestep sim (1000/60 ms, 250 ms clamp), HiDPI native rendering,
+ * hard entity caps inside spawn functions, load-time layout validation.
+ */
+
+// ---------- DOM (every getElementById result declared here) ----------
+const canvas      = document.getElementById('game');
+const errDiv      = document.getElementById('errDiv');
+const overlay     = document.getElementById('overlay');
+const ovTitle     = document.getElementById('ovTitle');
+const ovLines     = document.getElementById('ovLines');
+const startBtn    = document.getElementById('startBtn');
+const shop        = document.getElementById('shop');
+const shopRows    = document.getElementById('shopRows');
+const shopMsg     = document.getElementById('shopMsg');
+const shopClose   = document.getElementById('shopClose');
+const shopBtn     = document.getElementById('shopBtn');
+const pauseOv     = document.getElementById('pauseOv');
+const muteBtn     = document.getElementById('muteBtn');
+const priceVal    = document.getElementById('priceVal');
+const priceDown   = document.getElementById('priceDown');
+const priceUp     = document.getElementById('priceUp');
+const priceSlider = document.getElementById('priceSlider');
+const orderBtn    = document.getElementById('orderBtn');
+const emergencyBtn= document.getElementById('emergencyBtn');
+
+const ctx = canvas.getContext('2d');
+
+// ---------- Constants ----------
+const LW = 960, LH = 600;             // logical size
+const STEP = 1000/60;                 // fixed timestep ms
+const DAY_TICKS = 90*60;              // one day ~= 90 s
+const CAP_CARS = 40, CAP_PARTICLES = 300, CAP_POPUPS = 60;
+const PANEL_X = 740;                  // HUD panel starts here
+const PX = [100,220,340,460,580,700]; // pump x positions
+const CAR_COLORS = ['#e05252','#4f8fdd','#52b06b','#e8a33d','#9b6dd6','#48b7b0'];
+const START_CASH = 750, START_FUEL = 600;
+const MILESTONES = [25000,75000,200000];
+const LS_BEST_NET='gst_best_networth', LS_BEST_DAY='gst_best_day', LS_MUTED='gst_muted';
+
+// ---------- Station layout map (validated at load) ----------
+// # wall/building  T tank(block)  . lot  P pump pad  D store door  K parking
+// B delivery bay   W car wash     E highway entrance  H highway
+const LAYOUT = [
+  "########################",
+  "#.......D..............#",
+  "#......................#",
+  "#.TT..........WWW......#",
+  "#.TT..........WWW......#",
+  "#......................#",
+  "#BBB...................#",
+  "#BBB...................#",
+  "#.P..P..P..P..P..P.....#",
+  "#......................#",
+  "#.....KKKKKK...........#",
+  "#......................#",
+  "#E.....................#",
+  "#HHHHHHHHHHHHHHHHHHHHHH#",
+  "#HHHHHHHHHHHHHHHHHHHHHH#"
+];
+
+function showLayoutError(errors){
+  try{
+    errDiv.textContent = 'LAYOUT VALIDATION FAILED:\n' + errors.join('\n');
+    errDiv.classList.remove('hidden');
+  }catch(e){}
+  try{
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.fillStyle='#5a1010'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle='#fff'; ctx.font='28px monospace';
+    ctx.fillText('LAYOUT ERROR - see console', 40, 60);
+  }catch(e){}
+}
+
+function validateLayout(){
+  const errors=[];
+  const W=LAYOUT[0].length;
+  LAYOUT.forEach((row,i)=>{ if(row.length!==W) errors.push('row '+i+' length '+row.length+' != '+W); });
+  // BFS from the highway entrance over walkable cells (everything but '#' and 'T')
+  let start=null; const H=LAYOUT.length;
+  const seen = LAYOUT.map(r=>r.split('').map(()=>false));
+  const walk = ch => ch!=='#' && ch!=='T';
+  for(let y=0;y<H && !start;y++){ const x=LAYOUT[y].indexOf('E'); if(x>=0) start=[x,y]; }
+  if(!start) errors.push('no highway entrance (E) found');
+  else{
+    const q=[start]; seen[start[1]][start[0]]=true;
+    while(q.length){
+      const [x,y]=q.pop();
+      const nb=[[x+1,y],[x-1,y],[x,y+1],[x,y-1]];
+      for(const [nx,ny] of nb){
+        if(nx<0||ny<0||nx>=W||ny>=H) continue;
+        if(seen[ny][nx] || !walk(LAYOUT[ny][nx])) continue;
+        seen[ny][nx]=true; q.push([nx,ny]);
+      }
+    }
+    for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+      const ch=LAYOUT[y][x];
+      if('PDKBW'.includes(ch) && !seen[y][x])
+        errors.push('unreachable interactive zone "'+ch+'" at ('+x+','+y+')');
+    }
+  }
+  if(errors.length){ showLayoutError(errors); throw new Error('Layout validation failed: '+errors.join('; ')); }
+}
+validateLayout();
+
+// ---------- Persistence (file:// safe, never crashes) ----------
+function loadLS(k,def){ try{ const v=localStorage.getItem(k); return v==null?def:JSON.parse(v); }catch(e){ return def; } }
+function saveLS(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
+let bestNet  = Number(loadLS(LS_BEST_NET,0))||0;
+let bestDay  = Number(loadLS(LS_BEST_DAY,0))||0;
+let muted    = !!loadLS(LS_MUTED,false);
+
+// ---------- Upgrade definitions ----------
+const UPGRADE_DEFS = [
+  {id:'pump',      name:'Extra Pump Bay',      max:4, base:350,  growth:1.9, desc:'More pumps (2 \u2192 6)'},
+  {id:'tank',      name:'Larger Fuel Tank',    max:5, base:300,  growth:1.7, desc:'+500 L storage'},
+  {id:'tanker',    name:'Tanker Capacity',     max:4, base:280,  growth:1.7, desc:'+300 L per delivery'},
+  {id:'attendant', name:'Hire Attendant',      max:3, base:650,  growth:1.9, desc:'Auto-serves pumps (max 3)'},
+  {id:'store',     name:'Convenience Store',   max:1, base:1200, growth:1,   desc:'Open the store — shoppers start coming (+rep)'},
+  {id:'coffee',    name:'Coffee Bar',          max:1, base:1800, growth:1,   desc:'Coffee bar — extra store customers', prereq:'store'},
+  {id:'wash',      name:'Car Wash Bay',        max:1, base:2500, growth:1,   desc:'Wash customers'},
+  {id:'signage',   name:'Better Signage',      max:3, base:500,  growth:2.2, desc:'More traffic sees you'},
+  {id:'hose',      name:'Speed Hose',          max:3, base:400,  growth:2.0, desc:'Faster pumping'},
+  {id:'loyalty',   name:'Loyalty Program',     max:1, base:2000, growth:1,   desc:'Reputation floor 40'}
+];
+const upg = {};
+UPGRADE_DEFS.forEach(d=>upg[d.id]=0);
+
+// ---------- Game state ----------
+let state='start';           // start | playing | report | gameover | celebrate
+let paused=false;
+let cash=START_CASH, day=1, rep=50, fuel=START_FUEL;
+let price=3.60, townAvg=3.20, wholesale=2.40;
+let dayT=0;
+let cars=[], queue=[], particles=[], popups=[];
+let slots=[];
+let delivery={state:'idle',t:0,x:-260,liters:0};
+let invested=0;
+let rev={fuel:0,coffee:0,wash:0}, dayExpenses=0, dayLiters=0, dayRepDelta=0;
+let report=null, reportT=0;
+let celebMsg='', celebT=0, milestoneIdx=0;
+let spawnTimer=60, carSeq=0, simTick=0, spawnedTotal=0;
+let S=1; // device pixels per logical unit
+
+// ---------- Derived values ----------
+function lvl(id){ return upg[id]||0; }
+function tankCapacity(){ return 1000 + 500*lvl('tank'); }
+function deliverySize(){ return 600 + 300*lvl('tanker'); }
+function clicksNeeded(){ return Math.max(3, 6 - lvl('hose')); }
+function overheadCost(){ return 40 + 12*UPGRADE_DEFS.reduce((a,d)=>a+lvl(d.id),0); }
+function clampRep(r){ const f=lvl('loyalty')>0?40:0; return Math.max(f, Math.min(100,r)); }
+function repAdd(d){ rep=clampRep(rep+d); dayRepDelta+=d; }
+function fmt$(n){ return (n<0?'-$':'$') + Math.abs(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function costOf(d){ return Math.round(d.base*Math.pow(d.growth, upg[d.id])/10)*10; }
+
+// ---------- Slots ----------
+function buildSlots(){
+  const old=slots;
+  slots=[];
+  for(let i=0;i<2+lvl('pump') && i<6;i++) slots.push({type:'fuel',x:PX[i],y:372,car:null,prog:0});
+  if(lvl('store')) slots.push({type:'store',x:260,y:150,car:null,prog:0});
+  if(lvl('wash'))   slots.push({type:'wash',  x:620,y:150,car:null,prog:0});
+  // preserve cars across rebuild by (type, occurrence) — indices shift when coffee/wash unlock
+  const oc={};
+  for(const o of old){
+    if(!o.car) continue;
+    const n=oc[o.type]=(oc[o.type]||0); oc[o.type]++;
+    let cnt=-1;
+    for(const s of slots){ if(s.type===o.type){ cnt++; if(cnt===n){ s.car=o.car; s.prog=o.prog; o.car.slotIdx=slots.indexOf(s); break; } } }
+  }
+}
+const rebuildSlotsKeepCars=buildSlots;
+
+// ---------- Audio (synthesized SFX, lazily created on first gesture) ----------
+let AC=null;
+function unlockAudio(){ if(AC) return; try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} }
+function beep(f,dur,type,vol,delay){
+  if(!AC||muted) return;
+  try{
+    const t=AC.currentTime+(delay||0);
+    const o=AC.createOscillator(), g=AC.createGain();
+    o.type=type||'sine'; o.frequency.setValueAtTime(f,t);
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(vol||0.12,t+0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(t); o.stop(t+dur+0.02);
+  }catch(e){}
+}
+const sfx={
+  cha(){ beep(880,.08,'square',.10,0); beep(1318,.14,'square',.10,.08); },
+  buzz(){ beep(110,.22,'sawtooth',.16); },
+  horn(){ beep(196,.4,'triangle',.18,0); beep(233,.4,'triangle',.14,.03); },
+  click(){ beep(420,.04,'square',.045); },
+  sad(){ beep(330,.15,'sine',.10,0); beep(247,.25,'sine',.10,.12); }
+};
+window.addEventListener('pointerdown', unlockAudio);
+window.addEventListener('keydown', unlockAudio);
+
+// ---------- Pre-rendered art (cached offscreen canvases at 2x res) ----------
+function makeCache(w,h){ const c=document.createElement('canvas'); c.width=w*2; c.height=h*2;
+  const g=c.getContext('2d'); g.scale(2,2); return {c:c,g:g}; }
+function rr(g,x,y,w,h,r){ g.beginPath(); g.moveTo(x+r,y);
+  g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r);
+  g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); }
+
+const SPR={cars:{},tanker:null,bg:null,attendant:null};
+function buildCarSprites(){
+  SPR.cars={};
+  for(const col of CAR_COLORS){
+    const k=makeCache(46,24), g=k.g;
+    g.fillStyle='rgba(0,0,0,.28)'; rr(g,2,15,42,7,4); g.fill();      // ground shadow
+    g.fillStyle=col; rr(g,1,2,44,19,6); g.fill();
+    g.strokeStyle='rgba(0,0,0,.45)'; g.lineWidth=1.2; g.stroke();
+    g.fillStyle='rgba(255,255,255,.24)'; rr(g,3,3,40,6,4); g.fill();  // top gloss
+    g.fillStyle='#17222b'; rr(g,13,4,18,16,4); g.fill();              // roof
+    g.fillStyle='#bcd9ee'; rr(g,15,5.5,7,13,2); g.fill();             // windshield-ish
+    g.fillStyle='#ffe9a8'; g.fillRect(41,5,4,4); g.fillRect(41,14,4,4);// head lights
+    g.fillStyle='rgba(255,110,80,.9)'; g.fillRect(1,5,3,4); g.fillRect(1,14,3,4);
+    SPR.cars[col]=k.c;
+  }
+}
+function buildTankerSprite(){
+  const k=makeCache(240,84), g=k.g;
+  g.fillStyle='rgba(0,0,0,.3)'; rr(g,6,68,228,10,5); g.fill();
+  g.fillStyle='#2b62b8'; rr(g,168,18,66,44,8); g.fill();              // cab
+  g.fillStyle='#bcd9ee'; g.fillRect(210,24,20,16);                     // windshield
+  g.fillStyle='#c9d4de'; rr(g,16,26,146,36,16); g.fill();              // tank
+  g.strokeStyle='#8494a4'; g.lineWidth=2; g.stroke();
+  g.fillStyle='#8494a4'; g.fillRect(50,26,4,36); g.fillRect(100,26,4,36);
+  g.fillStyle='#d33'; rr(g,24,34,18,12,3); g.fill();
+  g.fillStyle='#222';
+  for(const wx of [40,80,150,205]){ g.beginPath(); g.arc(wx,66,11,0,7); g.fill(); }
+  g.fillStyle='#777';
+  for(const wx of [40,80,150,205]){ g.beginPath(); g.arc(wx,66,4.5,0,7); g.fill(); }
+  SPR.tanker=k.c;
+}
+function buildAttendantSprite(){
+  const k=makeCache(16,30), g=k.g;
+  g.fillStyle='#1d4ed8'; rr(g,3,10,10,14,4); g.fill();
+  g.fillStyle='#e8b48c'; g.beginPath(); g.arc(8,6,5,0,7); g.fill();
+  g.fillStyle='#d33'; g.fillRect(3,3,10,3);
+  g.fillStyle='#222'; g.fillRect(4,24,3,5); g.fillRect(9,24,3,5);
+  SPR.attendant=k.c;
+}
+function rebuildStatic(){
+  const k=makeCache(LW,LH), g=k.g;
+  // grass + sky strip
+  g.fillStyle='#3f7d4e'; g.fillRect(0,0,PANEL_X,LH);
+  // lot concrete
+  g.fillStyle='#9aa2ab'; g.fillRect(0,200,PANEL_X,320);
+  g.fillStyle='#8e969f'; g.fillRect(0,420,PANEL_X,100);
+  // entrance driveway
+  g.fillStyle='#a7aeb6'; g.fillRect(36,420,48,100);
+  // parking stripes (grid row 10)
+  g.strokeStyle='rgba(255,255,255,.5)'; g.lineWidth=2;
+  for(let i=6;i<=12;i++){ g.beginPath(); g.moveTo(i*40,400); g.lineTo(i*40,440); g.stroke(); }
+  // store building
+  g.fillStyle='#7c4a35'; g.fillRect(30,16,610,96);
+  g.fillStyle='#5f3928'; g.fillRect(30,16,610,14);
+  const bright=lvl('store')>0;
+  g.fillStyle=bright?'#3d8f4f':'#55614e'; g.fillRect(60,64,540,26);      // awning band
+  for(let i=0;i<13;i++){ g.fillStyle=i%2? '#e8e4d8' : (bright?'#d94f3d':'#7c8577'); g.fillRect(60+i*41.5,64,41.5,26); }
+  g.fillStyle=bright?'#ffd76a':'#8a94a3'; g.font='bold 26px system-ui'; g.textAlign='center';
+  g.fillText(bright?'CONVENIENCE STORE':'CLOSED STORE',335,52);
+  g.fillStyle='#2a2018'; g.fillRect(318,88,44,24);                        // door
+  if(lvl('coffee')){ g.fillStyle='#6b4a2f'; g.fillRect(430,90,34,22);
+    g.font='18px system-ui'; g.fillText('\u2615',447,108); }
+  g.textAlign='left';
+  // tank block
+  g.fillStyle='#cfd6dd'; rr(g,78,116,86,76,14); g.fill();
+  g.strokeStyle='#7c8894'; g.lineWidth=3; g.stroke();
+  g.fillStyle='#33414e'; g.font='bold 12px system-ui';
+  g.fillText('FUEL',102,158); g.textAlign='left';
+  // delivery bay stripes
+  g.strokeStyle='rgba(255,215,106,.85)'; g.lineWidth=3;
+  g.strokeRect(20,236,180,96);
+  for(let i=0;i<5;i++){ g.beginPath(); g.moveTo(20,246+i*18); g.lineTo(44,246+i*18); g.stroke(); }
+  g.fillStyle='#5c6a78'; g.font='bold 13px system-ui'; g.fillText('DELIVERY',48,232);
+  // car wash
+  if(lvl('wash')){
+    g.fillStyle='#2f6f8f'; g.fillRect(552,112,152,92);
+    g.fillStyle='#255b76'; g.fillRect(552,112,152,16);
+    g.fillStyle='#bcd9ee'; g.font='bold 15px system-ui';
+    g.fillText('CAR WASH',584,140); g.fillText('\ud83d\udebf',614,168);
+    g.fillStyle='#c7d8e4'; for(let i=0;i<5;i++) g.fillRect(560+i*28,180,12,20);
+  } else {
+    g.strokeStyle='rgba(255,255,255,.35)'; g.lineWidth=2; g.strokeRect(556,116,144,84);
+    g.fillStyle='rgba(255,255,255,.4)'; g.font='12px system-ui'; g.fillText('wash pad',592,160);
+  }
+  // highway
+  g.fillStyle='#3a3f46'; g.fillRect(0,520,LW,80);
+  g.fillStyle='#5a626c'; g.fillRect(0,517,LW,4); g.fillRect(0,598,LW,3);
+  g.strokeStyle='#e8d44f'; g.lineWidth=3; g.setLineDash([26,20]);
+  g.beginPath(); g.moveTo(0,562); g.lineTo(LW,562); g.stroke(); g.setLineDash([]);
+  // sign post
+  g.fillStyle='#556170'; g.fillRect(660,486,10,42); g.fillRect(700,486,10,42);
+  // decorative trees
+  for(const tx of [30,210]){ g.fillStyle='#2c5e3a'; g.beginPath(); g.arc(tx,160,26,0,7); g.fill();
+    g.fillStyle='#5b3d24'; g.fillRect(tx-4,180,8,18); }
+  SPR.bg=k.c;
+}
+
+// ---------- Entities ----------
+function addParticle(x,y,vx,vy,life,color,r){
+  if(particles.length>=CAP_PARTICLES) return;   // hard cap in spawn function
+  particles.push({x,y,vx,vy,age:0,life,color,r:r||3});
+}
+function addPopup(x,y,text,color){
+  if(popups.length>=CAP_POPUPS) return;          // hard cap in spawn function
+  popups.push({x,y,text,age:0,color:color||'#ffd76a'});
+}
+function pickKind(){
+  const r=Math.random();
+  if(lvl('wash') && r<0.15) return 'wash';
+  if(lvl('store') && r<0.27) return 'shop';
+  if(lvl('coffee') && r<0.47) return 'coffee';
+  return 'fuel';
+}
+function slotTypeFor(k){ return k==='fuel'?'fuel':(k==='wash'?'wash':'store'); }   // shop+coffee share the store slot
+function assignSlot(car,si,fromQueue){
+  const s=slots[si];
+  s.car=car; s.prog=0;
+  car.slotIdx=si; car.state='in';
+  car.wp = fromQueue ? [{x:s.x,y:s.y}] : [{x:s.x,y:505},{x:s.x,y:s.y}];
+}
+function spawnCarSim(kind){
+  if(state!=='playing') return null;
+  if(cars.length>=CAP_CARS) return null;         // hard cap inside the spawn function
+  if(!kind) kind=pickKind();
+  const lane=Math.random()<0.5?0:1, fromL=lane===0;
+  const y=lane?583:545;
+  const car={ id:++carSeq, x: fromL?-30:738, y:y, laneY:y, dir: fromL?1:-1,
+    kind:kind, liters:18+((Math.random()*23)|0), state:'in', slotIdx:-1,
+    wait:0, patience:1200+((Math.random()*900)|0),
+    color:CAR_COLORS[(Math.random()*CAR_COLORS.length)|0],
+    ang: fromL?0:Math.PI, wheel:0, wp:null, gone:false };
+  cars.push(car); spawnedTotal++;
+  if(kind==='fuel'){
+    if(fuel<5){
+      car.state='leave'; car.wp=null;
+      repAdd(-2); addPopup(Math.min(700,Math.max(40,car.x)), y-26, '\u26fd NO FUEL! \ud83d\ude21','#ff6b6b');
+      sfx.sad();
+      return car;
+    }
+    const si=slots.findIndex(s=>s.type==='fuel' && !s.car);
+    if(si>=0) assignSlot(car,si);
+    else { car.state='queue'; car.wp=null; queue.push(car); }
+  } else {
+    const si=slots.findIndex(s=>s.type===slotTypeFor(kind) && !s.car);
+    if(si>=0) assignSlot(car,si);
+    else { car.state='queue'; car.wp=null; queue.push(car); }   // store/wash visitors wait in line too
+  }
+  return car;
+}
+function moveTo(c,w,spd){
+  const dx=w.x-c.x, dy=w.y-c.y, d=Math.hypot(dx,dy);
+  if(d<=spd){
+    c.x=w.x; c.y=w.y;
+    if(c.wp) c.wp.shift();
+  } else { c.x+=dx/d*spd; c.y+=dy/d*spd; }
+  c.ang=Math.atan2(dy,dx); c.wheel+=spd*0.28;
+}
+function exitDrive(c){
+  if(c.wp && c.wp.length){ moveTo(c,c.wp[0],2.8); }
+  else { c.x+=c.dir*2.8; c.ang=c.dir>0?0:Math.PI; c.wheel+=0.8; }
+  if(c.x<-100 || c.x>1030) c.gone=true;
+}
+function updateCar(c){
+  if(c.state==='leave'){ exitDrive(c); puff(c); return; }
+  c.wait++;
+  if(c.state==='queue'){
+    const qi=queue.indexOf(c);
+    if(qi<0){ c.state='in'; return; }
+    const grp=slotTypeFor(c.kind);
+    const same=queue.filter(q=>slotTypeFor(q.kind)===grp);
+    const ki=same.indexOf(c);
+    const pos = grp==='store' ? {x:196+ki*54,y:250}
+              : grp==='wash'  ? {x:520+ki*54,y:250}
+              : {x:80+qi*56,y:505};
+    if(ki>=4){ queue.splice(qi,1); c.state='leave'; c.wp=null; repAdd(-1); addPopup(c.x,c.y-26,'\ud83d\ude21 FULL','#ff6b6b'); sfx.sad(); return; }
+    moveTo(c,pos,2.0);
+    if(c.wait>c.patience){
+      queue.splice(qi,1);
+      c.state='leave'; c.wp=null;
+      repAdd(-2); addPopup(c.x,c.y-26,'\ud83d\ude21 TOO SLOW','#ff6b6b'); sfx.sad();
+    }
+  } else if(c.state==='in'){
+    if(!c.wp || !c.wp.length){ c.state='serve'; }
+    else moveTo(c,c.wp[0],2.0);
+  } else if(c.state==='serve'){
+    if(c.wait>c.patience*1.7){
+      const s=slots[c.slotIdx]; if(s){ s.car=null; s.prog=0; }
+      c.state='leave'; c.wp=null;
+      repAdd(-2); addPopup(c.x,c.y-26,'\ud83d\ude21 GAVE UP','#ff6b6b'); sfx.sad();
+    }
+  }
+  puff(c);
+}
+function puff(c){
+  if((c.state==='in'||c.state==='queue'||c.state==='leave') && ((simTick+c.id)%14===0)){
+    addParticle(c.x-16*Math.cos(c.ang), c.y-16*Math.sin(c.ang),
+      (Math.random()-0.5)*0.3-0.2, -0.35, 40, 'rgba(160,165,170,0.55)', 2.5);
+  }
+}
+function completeSale(s){
+  const c=s.car; if(!c) return;
+  let amount=0, sold=0, popupTxt='';
+  if(c.kind==='fuel'){
+    sold=Math.min(c.liters, Math.max(0,fuel));
+    fuel-=sold; amount=sold*price;
+    rev.fuel+=amount; dayLiters+=sold;
+    popupTxt='+'+fmt$(amount);
+  } else if(c.kind==='coffee'){
+    amount=4.5; rev.coffee+=amount; popupTxt='+$4.50 \u2615';
+  } else if(c.kind==='shop'){
+    amount=6.5; rev.coffee+=amount; popupTxt='+$6.50 \ud83d\uded2';
+  } else {
+    amount=9; rev.wash+=amount; popupTxt='+$9.00 \ud83d\udebf';
+  }
+  if(rep>70 && Math.random()<0.25){
+    const tip=Math.max(1,Math.round(amount*0.1));
+    amount+=tip; rev[c.kind]+=tip; popupTxt+=' +TIP';
+  }
+  cash+=amount;
+  addPopup(c.x,c.y-30,popupTxt,'#ffd76a');
+  for(let i=0;i<4;i++) addParticle(c.x,c.y-10,(Math.random()-0.5)*2,-1.5-Math.random(),34,'#ffd76a',3);
+  if(c.kind==='fuel'){
+    if(price<townAvg) repAdd(0.6); else if(price>townAvg*1.15) repAdd(-0.4); else repAdd(0.2);
+  }
+  sfx.cha();
+  s.car=null; s.prog=0;
+  c.state='leave'; c.wp=null;
+  if(s.type==='fuel'||s.type==='store'||s.type==='wash'){
+    for(let i=0;i<queue.length;i++){
+      const q=queue[i];
+      if(q.state==='queue' && slotTypeFor(q.kind)===s.type){ queue.splice(i,1); assignSlot(q, slots.indexOf(s), true); break; }
+    }
+  }
+  checkMilestones();
+}
+function servePumpSim(i){
+  if(state!=='playing') return false;
+  const s=slots[i];
+  if(!s || !s.car || s.car.state!=='serve') return false;
+  s.prog++;
+  sfx.click();
+  if(s.prog>=clicksNeeded()) completeSale(s);
+  return true;
+}
+// ---------- Attendants: each one claims a busy pump and works it continuously ----------
+const ATT_RATE=1/20;          // progress/tick/attendant (car needs ~6 → ~2s per car per attendant)
+let attPos=[], attTarget=[];  // per attendant: interpolated draw position, assigned slot (-1 = standby)
+function updateAttendants(){
+  const a=lvl('attendant');
+  if(!a){ attPos=[]; attTarget=[]; return; }
+  const need=[];
+  for(let i=0;i<slots.length;i++){ const s=slots[i]; if(s.car && s.car.state==='serve' && s.prog<clicksNeeded()) need.push(i); }
+  attTarget.length=a;
+  for(let k=0;k<a;k++) attTarget[k]= k<need.length ? need[k] : -1;
+  for(let k=0;k<a;k++){
+    const i=attTarget[k];
+    if(i>=0){
+      const s=slots[i];
+      if(s.car && s.car.state==='serve'){
+        s.prog+=ATT_RATE;
+        if(s.prog>=clicksNeeded()) completeSale(s);
+      }
+    }
+    const tg = (i>=0 && slots[i]) ? {x:slots[i].x-28, y:slots[i].y+8} : {x:44+k*26, y:452};
+    if(!attPos[k]) attPos[k]={x:tg.x, y:tg.y};
+    const p=attPos[k], dx=tg.x-p.x, dy=tg.y-p.y, d=Math.hypot(dx,dy);
+    if(d>2){ p.x+=dx*(2.2/d); p.y+=dy*(2.2/d); }
+  }
+}
+
+// ---------- Demand / spawning ----------
+function hourNow(){ return 6 + 16*dayT/DAY_TICKS; }
+function demandMult(){
+  const r=price/townAvg;
+  if(r<1) return Math.min(2.2, 1+(1-r)*1.8);
+  return Math.max(0.4, 1-(r-1)*1.2);
+}
+function spawnRateMult(){
+  const hour=hourNow();
+  const dayScale=Math.min(2.2, 1+(day-1)*0.05);
+  const rush=Math.exp(-((hour-8)*(hour-8))/3)+Math.exp(-((hour-17)*(hour-17))/4);
+  const traffic=dayScale*(0.7+rush*0.9);
+  const sig=1+0.3*lvl('signage');
+  const repm=0.4+rep/100;
+  return traffic*sig*repm*demandMult();
+}
+
+// ---------- Tanker ----------
+function orderTanker(){
+  if(state!=='playing') return false;
+  if(delivery.state!=='idle') return false;
+  const L=deliverySize();
+  const cost=Math.round(L*wholesale+80);
+  if(cash<cost){ addPopup(120,220,'need '+fmt$(cost),'#ff6b6b'); return false; }
+  cash-=cost; dayExpenses+=cost;
+  delivery={state:'in',t:0,x:-260,liters:L};
+  addPopup(120,240,'-'+fmt$(cost),'#ff9d6b');
+  sfx.click(); draw();
+  return true;
+}
+function updateTanker(){
+  if(delivery.state==='in'){
+    delivery.t++; delivery.x+=3.2;
+    if(delivery.x>=100){ delivery.x=100; delivery.state='pump'; delivery.t=0; sfx.horn(); }
+  } else if(delivery.state==='pump'){
+    delivery.t++;
+    fuel=Math.min(tankCapacity(), fuel+delivery.liters/300);
+    if(delivery.t>=300){ delivery.state='out'; sfx.buzz(); }
+  } else if(delivery.state==='out'){
+    delivery.x+=3.2;
+    if(delivery.x>1060) delivery.state='idle';
+  }
+}
+function emergency(){
+  if(state!=='playing') return false;
+  const cost=Math.round(200*wholesale*1.8);
+  cash-=cost; dayExpenses+=cost;
+  fuel=Math.min(tankCapacity(), fuel+200);
+  addPopup(120,200,'+200L  -'+fmt$(cost),'#ffd76a');
+  sfx.click(); draw();
+  return true;
+}
+
+// ---------- Day cycle ----------
+function endDaySim(){
+  if(state!=='playing') return false;
+  const overhead=overheadCost();
+  cash-=overhead;
+  const revenue=rev.fuel+rev.coffee+rev.wash;
+  dayRepDelta += 2*(lvl('signage')+lvl('store')+lvl('wash'));
+  rep=clampRep(rep);
+  report={ day:day, revenue:revenue, fuel:rev.fuel, coffee:rev.coffee, wash:rev.wash,
+    liters:dayLiters, expenses:dayExpenses, overhead:overhead,
+    net:revenue-dayExpenses-overhead };
+  day+=1;                                     // counter advances for the next day
+  if(cash+invested>bestNet){ bestNet=cash+invested; saveLS(LS_BEST_NET,bestNet); }
+  if(report.day>bestDay){ bestDay=report.day; saveLS(LS_BEST_DAY,bestDay); }
+  if(cash<0){
+    state='gameover';
+    showOverlay('GAME OVER',
+      ['You went bankrupt on day '+report.day+' with '+fmt$(cash)+'.',
+       'Best net worth: '+fmt$(bestNet)+'   Best day: '+bestDay], 'RESTART');
+  } else {
+    state='report'; reportT=0;
+  }
+  draw();
+  return true;
+}
+function dismissReport(){
+  if(state!=='report') return;
+  state='playing'; dayT=0;
+  rev={fuel:0,coffee:0,wash:0}; dayExpenses=0; dayLiters=0; dayRepDelta=0;
+  wholesale=Math.min(6.0, Math.max(1.0, wholesale*(0.85+Math.random()*0.30)));
+  townAvg=Math.min(5.2, Math.max(2.2, townAvg*(0.9+Math.random()*0.20)));
+  wholesale=Math.min(wholesale, townAvg*1.3);   // never allow an impossible-margin market
+  if(anyAffordable()) openShop();
+  draw();
+}
+function checkMilestones(){
+  if(milestoneIdx<MILESTONES.length && cash>=MILESTONES[milestoneIdx]){
+    celebMsg='TYCOON! You reached $'+MILESTONES[milestoneIdx].toLocaleString('en-US')+'!';
+    milestoneIdx++;
+    state='celebrate'; celebT=0; sfx.horn(); draw();
+  }
+}
+
+// ---------- Upgrades / shop ----------
+function buyUpgradeSim(id){
+  const d=UPGRADE_DEFS.find(x=>x.id===id);
+  if(!d) return false;
+  if(upg[id]>=d.max) return false;
+  if(d.prereq && upg[d.prereq]<1) return false;
+  const cost=costOf(d);
+  if(cash<cost) return false;
+  cash-=cost; invested+=cost; upg[id]++;
+  sfx.cha();
+  if(id==='pump'||id==='store'||id==='coffee'||id==='wash') rebuildSlotsKeepCars();
+  if(id==='store'||id==='wash'||id==='coffee'||id==='signage') rebuildStatic();
+  if(id==='store'||id==='coffee'||id==='wash'){
+    for(let i=0;i<queue.length;i++){
+      const q=queue[i];
+      if(q.state==='queue' && slotTypeFor(q.kind)!=='fuel'){
+        const si=slots.findIndex(s=>s.type===slotTypeFor(q.kind) && !s.car);
+        if(si>=0){ queue.splice(i,1); assignSlot(q, si, true); break; }
+      }
+    }
+  }
+  addPopup(370,300,d.name+' Lv'+upg[id],'#7ad4ff');
+  draw();
+  return true;
+}
+function maxAllUpgradesSim(){
+  cash=Math.max(cash,1000000);
+  let changed=true;
+  while(changed){ changed=false; for(const d of UPGRADE_DEFS){ if(buyUpgradeSim(d.id)) changed=true; } }
+}
+function anyAffordable(){
+  return UPGRADE_DEFS.some(d=> upg[d.id]<d.max && (!d.prereq||upg[d.prereq]>0) && cash>=costOf(d));
+}
+function renderShop(){
+  let html='';
+  for(const d of UPGRADE_DEFS){
+    const l=upg[d.id], maxed=l>=d.max;
+    const missing=!!d.prereq && upg[d.prereq]<1;
+    const afford=cash>=costOf(d);
+    const can=!maxed && !missing && afford;
+    html+='<div class="shopRow'+(can?'':' dim')+'">'
+      +'<div><span class="nm">'+d.name+'</span><span class="lv">Lv '+l+'/'+d.max+'</span>'
+      +'<div class="ds">'+d.desc+'</div></div>'
+      +'<button class="btn" data-up="'+d.id+'"'+(can?'':' disabled')+'>'
+      +(maxed?'MAX':(missing?'needs '+d.prereq:'$'+costOf(d)))+'</button></div>';
+  }
+  shopRows.innerHTML=html;
+  shopMsg.textContent = anyAffordable() ? '' :
+    'Nothing you can afford right now \u2014 serve more drivers and come back!';
+}
+function openShop(){ renderShop(); shop.classList.remove('hidden'); draw(); }
+function closeShop(){ shop.classList.add('hidden'); draw(); }
+
+// ---------- Run lifecycle ----------
+function startRunSim(){
+  cash=START_CASH; day=1; rep=50; fuel=START_FUEL;
+  price=3.60; townAvg=3.20; wholesale=2.40; dayT=0;
+  cars=[]; queue=[]; particles=[]; popups=[];
+  slots=[];                       // drop stale slot cars, then rebuild clean
+  UPGRADE_DEFS.forEach(d=>upg[d.id]=0);
+  invested=0;
+  rev={fuel:0,coffee:0,wash:0}; dayExpenses=0; dayLiters=0; dayRepDelta=0;
+  delivery={state:'idle',t:0,x:-260,liters:0};
+  report=null; reportT=0; milestoneIdx=0; celebMsg='';
+  spawnTimer=60; attPos=[]; attTarget=[];
+  paused=false;
+  pauseOv.classList.add('hidden');
+  shop.classList.add('hidden');
+  overlay.classList.add('hidden');
+  buildSlots(); rebuildStatic(); syncPriceUI();
+  state='playing';
+  draw();
+}
+function showOverlay(title, lines, btnLabel){
+  ovTitle.textContent=title;
+  ovLines.innerHTML=lines.map(s=>'<div>'+s+'</div>').join('');
+  startBtn.textContent=btnLabel||'START';
+  overlay.classList.remove('hidden');
+}
+
+// ---------- Simulation step ----------
+function updateSim(){
+  simTick++;
+  if(state==='report'){ reportT++; return; }
+  if(state==='celebrate'){ celebT++; updateEffects(); return; }
+  if(state==='start'||state==='gameover'){ updateEffects(); return; }
+  if(state!=='playing') return;
+  dayT++;
+  if(dayT>=DAY_TICKS){ endDaySim(); return; }
+  spawnTimer--;
+  if(spawnTimer<=0){
+    const r=spawnRateMult();
+    spawnCarSim(null);
+    spawnTimer=Math.max(15, Math.round(115/Math.max(0.15,r)));
+  }
+  updateTanker();
+  for(const c of cars) updateCar(c);
+  cars=cars.filter(c=>!c.gone);
+  updateAttendants();
+  updateEffects();
+  checkMilestones();
+}
+function updateEffects(){
+  for(const p of particles){ p.age++; p.x+=p.vx; p.y+=p.vy; p.vy+=0.02; }
+  particles=particles.filter(p=>p.age<p.life);
+  for(const t of popups){ t.age++; t.y-=0.5; }
+  popups=popups.filter(t=>t.age<60);
+}
+
+// ---------- Drawing ----------
+function draw(){
+  ctx.setTransform(S,0,0,S,0,0);
+  if(SPR.bg) ctx.drawImage(SPR.bg,0,0,LW,LH);
+  drawPumps();
+  drawTanker();
+  drawAttendants();
+  for(const c of cars) drawCar(c);
+  drawParticles();
+  ctx.font='bold 15px system-ui'; ctx.textAlign='center';
+  for(const t of popups){
+    ctx.globalAlpha=Math.max(0,1-t.age/60);
+    ctx.fillStyle='rgba(0,0,0,.5)'; ctx.fillText(t.text,t.x+1,t.y+1);
+    ctx.fillStyle=t.color; ctx.fillText(t.text,t.x,t.y);
+  }
+  ctx.globalAlpha=1; ctx.textAlign='left';
+  drawSign();
+  drawTint();
+  drawPanel();
+  if(state==='report') drawReport();
+  if(state==='celebrate') drawCelebrate();
+}
+function drawPumps(){
+  for(let i=0;i<slots.length;i++){
+    const s=slots[i];
+    if(s.type!=='fuel') continue;
+    ctx.fillStyle='#78828c'; rr(ctx,s.x-26,306,52,16,5); ctx.fill();     // island
+    ctx.fillStyle='#2f6f4f'; rr(ctx,s.x-9,280,18,30,3); ctx.fill();      // pump unit
+    ctx.fillStyle='#dfe9f2'; ctx.fillRect(s.x-6,284,12,8);
+    if(i>=2 && lvl('pump')<i) { /* shouldn't happen; buildSlots gates */ }
+    if(s.car && s.car.state!=='in'){   // hose/bar only after the car arrives at the pad
+      ctx.strokeStyle='#222'; ctx.lineWidth=2.5;
+      ctx.beginPath(); ctx.moveTo(s.x,s.y-64);
+      ctx.quadraticCurveTo(s.x+14+Math.sin(s.prog)*4, s.y-40, s.car.x-6, s.car.y-8);
+      ctx.stroke();
+      const w=s.car.wait>600? '#ff6b6b' : (s.car.wait>360? '#ffd76a' : '#7ad47a');
+      ctx.fillStyle='rgba(0,0,0,.4)'; ctx.fillRect(s.car.x-16,s.car.y-24,32,5);
+      ctx.fillStyle=w; ctx.fillRect(s.car.x-16,s.car.y-24,32*Math.min(1,s.prog/clicksNeeded()),5);
+    }
+  }
+  for(const s of slots){          // progress bars for store/wash customers too
+    if(s.type==='fuel' || !s.car || s.car.state==='in') continue;
+    const w=s.car.wait>600? '#ff6b6b' : (s.car.wait>360? '#ffd76a' : '#7ad47a');
+    ctx.fillStyle='rgba(0,0,0,.4)'; ctx.fillRect(s.car.x-16,s.car.y-24,32,5);
+    ctx.fillStyle=w; ctx.fillRect(s.car.x-16,s.car.y-24,32*Math.min(1,s.prog/clicksNeeded()),5);
+  }
+  if(lvl('store')) drawSlotBubble(260,120, lvl('coffee')?'\u2615':'\ud83d\uded2');
+  if(lvl('wash'))   drawSlotBubble(620,120,'\ud83d\udebf');
+}
+function drawSlotBubble(x,y,emoji){
+  const s=slots.find(t=>t.type!=='fuel' && Math.abs(t.x-x)<2);
+  if(s && s.car && s.car.state==='serve'){
+    ctx.fillStyle='rgba(255,255,255,.85)';
+    ctx.fillRect(s.car.x-16,s.car.y-26,32,5);
+    ctx.fillStyle='#52b06b';
+    ctx.fillRect(s.car.x-16,s.car.y-26,32*Math.min(1,s.prog/clicksNeeded()),5);
+  }
+  ctx.font='20px system-ui'; ctx.fillText(emoji,x,y);
+}
+function drawTanker(){
+  if(delivery.state==='idle') return;
+  ctx.drawImage(SPR.tanker, delivery.x-120, 238, 240, 84);
+  if(delivery.state==='pump'){
+    ctx.strokeStyle='#2f6f4f'; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.moveTo(delivery.x-60,262);
+    ctx.quadraticCurveTo(delivery.x-90,220,120,190); ctx.stroke();
+  }
+}
+function drawAttendants(){
+  const a=lvl('attendant');
+  for(let i=0;i<a && i<attPos.length;i++){
+    const bob = attTarget[i]>=0 ? Math.sin(simTick*0.25+i)*1.2 : 0;
+    ctx.fillStyle='rgba(0,0,0,.25)';
+    ctx.beginPath(); ctx.ellipse(attPos[i].x+8, attPos[i].y+29, 9, 3.5, 0, 0, 7); ctx.fill();
+    ctx.drawImage(SPR.attendant, attPos[i].x, attPos[i].y+bob, 16, 30);
+  }
+}
+function drawCar(c){
+  ctx.save();
+  ctx.translate(c.x,c.y); ctx.rotate(c.ang);
+  ctx.drawImage(SPR.cars[c.color], -23,-12, 46,24);
+  ctx.strokeStyle='rgba(0,0,0,.6)'; ctx.lineWidth=1.4;
+  for(const wx of [-12,12]) for(const wy of [-9,9]){
+    ctx.save(); ctx.translate(wx,wy); ctx.rotate(c.wheel);
+    ctx.beginPath(); ctx.moveTo(-3,0); ctx.lineTo(3,0); ctx.stroke(); ctx.restore();
+  }
+  ctx.restore();
+  const emo=c.kind==='fuel'?'\u26fd':(c.kind==='coffee'?'\u2615':(c.kind==='shop'?'\ud83d\uded2':'\ud83d\udebf'));
+  ctx.fillStyle='rgba(255,255,255,.92)';
+  ctx.beginPath(); ctx.arc(c.x+16,c.y-20,11,0,7); ctx.fill();
+  ctx.strokeStyle='rgba(0,0,0,.35)'; ctx.stroke();
+  ctx.font='13px system-ui'; ctx.textAlign='center';
+  ctx.fillText(emo,c.x+16,c.y-16);
+  if(c.state==='queue'){
+    const p=1-Math.min(1,c.wait/c.patience);
+    ctx.fillStyle='rgba(0,0,0,.4)'; ctx.fillRect(c.x-15,c.y-32,30,4);
+    ctx.fillStyle=p>0.5?'#52b06b':(p>0.25?'#ffd76a':'#e05252');
+    ctx.fillRect(c.x-15,c.y-32,30*p,4);
+  }
+  ctx.textAlign='left';
+}
+function drawParticles(){
+  for(const p of particles){
+    ctx.globalAlpha=Math.max(0,1-p.age/p.life);
+    ctx.fillStyle=p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,7); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+}
+function drawSign(){
+  const sl=lvl('signage');
+  ctx.fillStyle=sl>=3?'#ffd23f':'#f2e9c9';
+  rr(ctx,608,438,132,50,6); ctx.fill();
+  ctx.strokeStyle=sl>=2?'#c8961e':'#8a8577'; ctx.lineWidth=3; ctx.stroke();
+  ctx.fillStyle='#33291a'; ctx.font='bold 24px system-ui'; ctx.textAlign='center';
+  ctx.fillText('$'+price.toFixed(2), 674, 468);
+  ctx.font='bold 11px system-ui'; ctx.fillText('GAS', 630, 452);
+  if(sl>=1){ for(let i=0;i<5;i++){ ctx.fillStyle=(simTick>>4)%2?'#ff4':'#a80';
+    ctx.beginPath(); ctx.arc(616+i*29,441,3,0,7); ctx.fill(); } }
+  if(sl>=2){ ctx.fillStyle='#d33'; ctx.font='bold 10px system-ui'; ctx.fillText('TOP BRAND',674,484); }
+  if(sl>=3){ ctx.fillStyle='#7a5c12'; ctx.font='bold 9px system-ui'; ctx.fillText('\u2605 24H PREMIUM \u2605',674,432); }
+  ctx.textAlign='left';
+}
+function drawTint(){
+  const th=dayT/DAY_TICKS;
+  if(state==='playing'||state==='report'){
+    if(th<0.08){ ctx.fillStyle='rgba(40,60,140,'+((0.08-th)*1.1).toFixed(3)+')'; ctx.fillRect(0,0,LW,LH); }
+    if(th>0.6){ const a=Math.min(0.22,(th-0.6)*0.55); ctx.fillStyle='rgba(255,120,30,'+a.toFixed(3)+')'; ctx.fillRect(0,0,LW,LH); }
+  }
+}
+function drawPanel(){
+  ctx.fillStyle='#0e151c'; ctx.fillRect(PANEL_X,0,LW-PANEL_X,LH);
+  ctx.fillStyle='#26313e'; ctx.fillRect(PANEL_X,0,3,LH);
+  ctx.fillStyle='#ffd76a'; ctx.font='bold 20px system-ui'; ctx.textAlign='left';
+  ctx.fillText('GAS STATION',PANEL_X+14,32);
+  ctx.fillStyle='#dfe9f2'; ctx.font='bold 15px system-ui';
+  ctx.fillText('CASH',PANEL_X+14,64);
+  ctx.fillStyle=cash<0?'#ff6b6b':'#7ad47a'; ctx.font='bold 18px system-ui';
+  ctx.fillText(fmt$(cash),PANEL_X+14,86);
+  ctx.fillStyle='#dfe9f2'; ctx.font='bold 15px system-ui';
+  ctx.fillText('FUEL IN TANK',PANEL_X+14,116);
+  ctx.fillStyle='#1a2530'; ctx.fillRect(PANEL_X+14,124,192,14);
+  const fr=fuel/tankCapacity();
+  ctx.fillStyle=fr<0.25?'#e05252':(fr<0.5?'#e8a33d':'#4f8fdd');
+  ctx.fillRect(PANEL_X+14,124,192*fr,14);
+  ctx.fillStyle='#dfe9f2'; ctx.font='13px system-ui';
+  ctx.fillText(Math.round(fuel)+' / '+tankCapacity()+' L',PANEL_X+14,154);
+  if(fuel<0.25*tankCapacity() && (simTick%60)<35 && state==='playing'){
+    ctx.fillStyle='#ff6b6b'; ctx.font='bold 13px system-ui';
+    ctx.fillText('\u26a0 LOW FUEL!',PANEL_X+118,154);
+  }
+  ctx.font='bold 15px system-ui'; ctx.fillStyle='#dfe9f2';
+  ctx.fillText('WHOLESALE  $'+wholesale.toFixed(2)+'/L',PANEL_X+14,184);
+  ctx.fillStyle='#ffd76a';
+  ctx.fillText('YOUR PRICE  $'+price.toFixed(2)+'/L',PANEL_X+14,210);
+  ctx.fillStyle='#dfe9f2'; ctx.font='bold 15px system-ui';
+  ctx.fillText('REPUTATION',PANEL_X+14,240);
+  ctx.fillStyle='#1a2530'; ctx.fillRect(PANEL_X+14,248,192,10);
+  ctx.fillStyle='#e8c33d'; ctx.fillRect(PANEL_X+14,248,192*rep/100,10);
+  ctx.fillStyle='#dfe9f2'; ctx.font='13px system-ui';
+  ctx.fillText(Math.round(rep)+' / 100 \u2b50',PANEL_X+14,274);
+  ctx.font='bold 15px system-ui';
+  ctx.fillText('DAY '+day+'   '+clockStr(),PANEL_X+14,304);
+  ctx.fillStyle='#8fb4d4'; ctx.font='13px system-ui';
+  ctx.fillText('Attendants: '+lvl('attendant')+'   Pumps: '+(2+lvl('pump')),PANEL_X+14,328);
+  ctx.fillText('Tanker: '+deliverySize()+' L   Hose: Lv'+lvl('hose'),PANEL_X+14,348);
+  ctx.fillStyle='#9fb8cf';
+  ctx.fillText('BEST  '+fmt$(bestNet)+'  \u00b7  Day '+bestDay,PANEL_X+14,380);
+  ctx.fillText('Net worth '+fmt$(cash+invested),PANEL_X+14,400);
+  ctx.fillStyle='#66788c'; ctx.font='12px system-ui';
+  ctx.fillText('click cars at pumps to serve',PANEL_X+14,436);
+  ctx.fillText('M=mute  P=pause  Shop anytime',PANEL_X+14,454);
+  ctx.fillText('goal: $25,000 = TYCOON',PANEL_X+14,472);
+}
+function clockStr(){
+  const h=hourNow(), hh=Math.floor(h), mm=Math.floor((h-hh)*60);
+  return (hh<10?'0':'')+hh+':'+(mm<10?'0':'')+mm;
+}
+function drawReport(){
+  ctx.fillStyle='rgba(5,8,14,.55)'; ctx.fillRect(0,0,PANEL_X,LH);
+  const t=Math.min(1,reportT/25), e=1-Math.pow(1-t,3);
+  const w=520,h=392, x=(PANEL_X-w)/2, fy=(LH-h)/2, y=LH+(fy-LH)*e;
+  ctx.fillStyle='#151d27'; rr(ctx,x,y,w,h,14); ctx.fill();
+  ctx.strokeStyle='#3a4a5c'; ctx.lineWidth=2; ctx.stroke();
+  ctx.textAlign='center';
+  ctx.fillStyle='#ffd76a'; ctx.font='bold 26px system-ui';
+  ctx.fillText('DAY '+report.day+' REPORT', x+w/2, y+42);
+  ctx.textAlign='left'; ctx.font='16px system-ui';
+  const L=x+42, R=x+w-42; let yy=y+80;
+  function row(lab,val,col){ ctx.fillStyle='#aebccd'; ctx.fillText(lab,L,yy);
+    ctx.fillStyle=col||'#dfe9f2'; ctx.textAlign='right'; ctx.fillText(val,R,yy); ctx.textAlign='left'; yy+=30; }
+  row('Fuel revenue', fmt$(report.fuel));
+  row('Store revenue', fmt$(report.coffee));
+  row('Wash revenue', fmt$(report.wash));
+  row('Fuel sold', Math.round(report.liters)+' L');
+  ctx.strokeStyle='#26313e'; ctx.beginPath(); ctx.moveTo(L,yy-14); ctx.lineTo(R,yy-14); ctx.stroke();
+  row('Day expenses', '-'+fmt$(report.expenses).replace('-',''), '#ff9d6b');
+  row('Overhead (rent+wages)', '-'+fmt$(report.overhead).replace('-',''), '#ff9d6b');
+  row('NET PROFIT', fmt$(report.net), report.net>=0?'#7ad47a':'#ff6b6b');
+  row('Reputation', (dayRepDelta>=0?'+':'')+dayRepDelta.toFixed(1)+' \u2192 '+Math.round(rep)+' \u2605');
+  ctx.textAlign='center';
+  ctx.fillStyle='#8fb4d4'; ctx.font='14px system-ui';
+  ctx.fillText('Best: '+fmt$(bestNet)+' \u00b7 Day '+bestDay, x+w/2, y+h-52);
+  if(reportT>28 && (simTick%70)<45){
+    ctx.fillStyle='#ffd76a'; ctx.font='bold 16px system-ui';
+    ctx.fillText('click to start Day '+day, x+w/2, y+h-22);
+  }
+  ctx.textAlign='left';
+}
+function drawCelebrate(){
+  ctx.fillStyle='rgba(5,8,14,.7)'; ctx.fillRect(0,0,PANEL_X,LH);
+  ctx.textAlign='center';
+  ctx.fillStyle=(celebT>>3)%2?'#ffd76a':'#ff9d3d'; ctx.font='bold 64px system-ui';
+  ctx.fillText('\u2605 TYCOON! \u2605', PANEL_X/2, 250);
+  ctx.fillStyle='#dfe9f2'; ctx.font='bold 24px system-ui';
+  ctx.fillText(celebMsg, PANEL_X/2, 300);
+  ctx.fillStyle='#8fb4d4'; ctx.font='16px system-ui';
+  ctx.fillText('click to keep playing \u2014 next milestone awaits', PANEL_X/2, 340);
+  ctx.textAlign='left';
+}
+
+// ---------- Main loop: fixed timestep accumulator ----------
+let lastTime=performance.now(), acc=0;
+function frame(now){
+  requestAnimationFrame(frame);
+  if(paused){ lastTime=now; return; }        // pause flag checked FIRST
+  let el=now-lastTime; lastTime=now;
+  if(el>250) el=250;                          // tab-switch protection
+  acc+=el;
+  while(acc>=STEP){ updateSim(); acc-=STEP; }
+  draw();
+}
+
+// ---------- Resize: HiDPI native ----------
+function resize(){
+  const dpr=Math.min(3, window.devicePixelRatio||1);
+  const fit=Math.min(window.innerWidth/LW, window.innerHeight/LH);
+  const cssW=Math.max(1,Math.floor(LW*fit)), cssH=Math.max(1,Math.floor(LH*fit));
+  canvas.style.width=cssW+'px'; canvas.style.height=cssH+'px';
+  canvas.width=Math.floor(LW*fit*dpr);
+  canvas.height=Math.floor(LH*fit*dpr);
+  S=canvas.width/LW;
+  draw();
+}
+window.addEventListener('resize', resize);
+
+// ---------- Input ----------
+function toLogical(e){
+  const r=canvas.getBoundingClientRect();
+  return { x:(e.clientX-r.left)*(LW/r.width), y:(e.clientY-r.top)*(LH/r.height) };
+}
+canvas.addEventListener('pointerdown', e=>{
+  if(state==='report'){ dismissReport(); return; }
+  if(state==='celebrate'){ state='playing'; draw(); return; }
+  if(state!=='playing'||paused) return;
+  const p=toLogical(e);
+  for(let i=0;i<slots.length;i++){
+    const s=slots[i];
+    if(!s.car) continue;
+    if(Math.hypot(p.x-s.car.x, p.y-s.car.y)<48){ servePumpSim(i); return; }
+    if(s.type==='fuel' && Math.hypot(p.x-s.x, p.y-295)<42){ servePumpSim(i); return; }
+  }
+});
+startBtn.addEventListener('click', ()=>{
+  if(state==='playing') return;               // guard: stray click can't reset a live run
+  startRunSim();
+});
+shopBtn.addEventListener('click', ()=>{ if(state==='playing') openShop(); });
+shopClose.addEventListener('click', closeShop);
+shopRows.addEventListener('click', e=>{
+  const id=e.target && e.target.getAttribute && e.target.getAttribute('data-up');
+  if(id){ buyUpgradeSim(id); renderShop(); }
+});
+orderBtn.addEventListener('click', ()=>orderTanker());
+emergencyBtn.addEventListener('click', ()=>emergency());
+function setPriceSim(v){
+  price=Math.min(9.99, Math.max(1, Math.round(v*100)/100));
+  syncPriceUI(); draw();
+}
+function syncPriceUI(){
+  priceVal.textContent='$'+price.toFixed(2);
+  priceSlider.value=String(price);
+}
+priceDown.addEventListener('click', ()=>setPriceSim(price-0.05));
+priceUp.addEventListener('click', ()=>setPriceSim(price+0.05));
+priceSlider.addEventListener('input', ()=>setPriceSim(parseFloat(priceSlider.value)));
+function toggleMute(){
+  muted=!muted;
+  muteBtn.textContent=muted?'\ud83d\udd07':'\ud83d\udd0a';
+  saveLS(LS_MUTED,muted);
+}
+muteBtn.addEventListener('click', toggleMute);
+function setPaused(p){
+  paused=p;
+  pauseOv.classList.toggle('hidden',!paused);
+  if(!paused) lastTime=performance.now();
+  draw();
+}
+window.addEventListener('keydown', e=>{
+  const tag=(e.target&&e.target.tagName)||'';
+  if(tag==='INPUT'||tag==='TEXTAREA') return;
+  if(e.key==='m'||e.key==='M'){ toggleMute(); e.preventDefault(); }
+  else if((e.key==='p'||e.key==='P') && state==='playing'){ setPaused(!paused); e.preventDefault(); }
+  else if(e.key==='Enter' && state==='report'){ dismissReport(); }
+});
+
+// ---------- Boot ----------
+buildCarSprites();
+buildTankerSprite();
+buildAttendantSprite();
+buildSlots();
+rebuildStatic();
+resize();
+muteBtn.textContent=muted?'\ud83d\udd07':'\ud83d\udd0a';
+syncPriceUI();
+showOverlay('GAS STATION TYCOON',
+  ['You inherited a run-down two-pump station on the highway.',
+   'Buy fuel cheap, price it smart, click cars at pumps to serve them fast.',
+   'Reinvest in the Shop, survive the nightly rent \u2014 reach $25,000 to become a TYCOON!'],
+  'START');
+state='start';
+draw();
+requestAnimationFrame(frame);
+
+// ---------- Test hooks ----------
+window.game = {
+  tick(n){ for(let i=0;i<n;i++) updateSim(); },
+  step(n){ for(let i=0;i<n;i++){ updateSim(); draw(); } },
+  pause(){ setPaused(true); },
+  resume(){ setPaused(false); },
+  startRun(){ startRunSim(); },
+  setCash(v){ cash=v; draw(); },
+  setFuel(v){ fuel=Math.max(0,v); draw(); },
+  setPrice(v){ setPriceSim(v); },
+  setDayT(v){ dayT=v; },
+  spawnCar(kind){ return spawnCarSim(kind); },
+  buyUpgrade(id){ return buyUpgradeSim(id); },
+  forceDelivery(){ return orderTanker(); },
+  emergencyTopUp(){ return emergency(); },
+  endDay(){ return endDaySim(); },
+  servePump(i){ return servePumpSim(i); },
+  maxAllUpgrades(){ maxAllUpgradesSim(); },
+  clearCars(){ cars=[]; queue=[]; for(const s of slots){ s.car=null; s.prog=0; } },
+  setReputation(v){ rep=clampRep(v); },
+  dismissReport(){ dismissReport(); },
+  openShop(){ openShop(); },
+  clearStorage(){ try{ [LS_BEST_NET,LS_BEST_DAY,LS_MUTED].forEach(k=>localStorage.removeItem(k)); }catch(e){} bestNet=0; bestDay=0; },
+  get cash(){ return cash; },
+  get fuel(){ return fuel; },
+  get price(){ return price; },
+  get day(){ return day; },
+  get reputation(){ return rep; },
+  get cars(){ return cars; },
+  get state(){ return state; },
+  get paused(){ return paused; },
+  get tankCapacity(){ return tankCapacity(); },
+  get attendants(){ return lvl('attendant'); },
+  get upgrades(){ return upg; },
+  get slots(){ return slots; },
+  get queue(){ return queue; },
+  get wholesale(){ return wholesale; },
+  get _townAvg(){ return townAvg; },
+  get overhead(){ return overheadCost(); },
+  get simTicks(){ return simTick; },
+  get spawnedTotal(){ return spawnedTotal; },
+  get netWorth(){ return cash+invested; },
+  get bestNetWorth(){ return bestNet; },
+  get bestDay(){ return bestDay; },
+  get delivery(){ return delivery; },
+  get dayRev(){ return rev; },
+  get dayT(){ return dayT; }
+};
+</script>
+</body>
+</html>

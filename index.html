@@ -4,280 +4,260 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DevAI Arcade</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Press+Start+2P&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0b0e17;
-    --bg2: #111627;
-    --card: #161c31;
-    --card-hover: #1c2440;
-    --border: #26304f;
-    --text: #e8ecf8;
-    --muted: #8b94b3;
-    --accent: #6c8cff;
-    --accent2: #9f6cff;
-    --green: #3ddc97;
-    --amber: #ffc555;
+    --cab: #151222;        /* cabinet body */
+    --cab-lo: #0e0c18;     /* cabinet body, shaded */
+    --screen: #0a0913;     /* attract-mode screen */
+    --wire: #2e2748;       /* bezel / hairline */
+    --ink: #efeaf8;
+    --muted: #b4adc6;
+    --bulb: #ffd76a;       /* marquee bulb */
+    --pixel: "Press Start 2P", "Courier New", monospace;
+    --body: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: radial-gradient(1200px 600px at 70% -10%, #1a2145 0%, var(--bg) 55%);
-    color: var(--text);
-    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    background: radial-gradient(120% 90% at 50% -10%, #201a38 0%, var(--cab-lo) 62%) fixed;
+    color: var(--ink);
+    font-family: var(--body);
     min-height: 100vh;
   }
-  header {
-    padding: 48px 24px 8px;
-    max-width: 1080px;
-    margin: 0 auto;
+  /* CRT scanlines — one whisper over everything, never interactive */
+  body::after {
+    content: "";
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,.07) 0 1px, transparent 1px 3px);
+    pointer-events: none;
+    z-index: 50;
   }
-  .logo {
-    display: flex;
-    align-items: center;
-    gap: 14px;
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+  html { scrollbar-color: #4a3f6e var(--cab-lo); }
+  ::-webkit-scrollbar { width: 12px; }
+  ::-webkit-scrollbar-track { background: var(--cab-lo); }
+  ::-webkit-scrollbar-thumb { background: #4a3f6e; border-radius: 6px; border: 2px solid var(--cab-lo); }
+
+  /* ── Marquee ─────────────────────────────────────────────── */
+  .marquee-shell { padding-top: 44px; }
+  .marquee {
+    position: relative;
+    border: 1px solid #3a3160;
+    border-radius: 6px;
+    background: linear-gradient(180deg, #1a1530, #141024);
+    padding: 34px 32px 26px;
   }
-  .logo-mark {
-    width: 46px; height: 46px;
-    border-radius: 12px;
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    display: grid; place-items: center;
-    font-size: 24px;
-    box-shadow: 0 4px 24px rgba(108,140,255,.35);
+  .bulbs {
+    position: absolute; top: -10px; left: 16px; right: 16px;
+    display: flex; justify-content: space-between; align-items: center;
+    background: var(--cab-lo);
+    border: 1px solid var(--wire); border-radius: 999px;
+    padding: 4px 10px;
+  }
+  .bulb {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #3a3157;
+    box-shadow: 0 0 0 rgba(255,215,106,0);
+  }
+  .marquee-head {
+    display: flex; flex-wrap: wrap; gap: 20px;
+    align-items: flex-end; justify-content: space-between;
   }
   h1 {
-    font-size: 28px;
-    font-weight: 700;
-    letter-spacing: .5px;
+    font-family: var(--pixel);
+    font-size: clamp(20px, 4.2vw, 34px);
+    font-weight: 400;
+    line-height: 1.35;
+    color: var(--ink);
+    text-shadow: 0 0 14px rgba(255,215,106,.35), 0 0 42px rgba(255,107,176,.18);
   }
-  h1 span { color: var(--accent); }
+  h1 em { font-style: normal; color: var(--bulb); }
   .tagline {
-    color: var(--muted);
-    margin-top: 10px;
-    font-size: 15px;
+    margin-top: 12px; font-size: 15px; color: var(--muted); max-width: 52ch;
   }
-  .ai-note {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 16px;
-    font-size: 13px;
-    color: var(--text);
-    background: rgba(108,140,255,.08);
-    border: 1px solid rgba(108,140,255,.3);
-    border-radius: 999px;
-    padding: 8px 14px;
+  /* maker's plate — where a cabinet says who built it */
+  .plate {
+    align-self: flex-end;
+    font-family: var(--pixel); font-size: 9px; line-height: 2;
+    color: #c2bcd2;
+    border: 1px solid var(--wire); border-radius: 4px;
+    padding: 10px 14px; background: var(--screen);
+    text-align: right;
   }
-  .ai-note b { color: var(--accent); font-weight: 700; }
-  .stats {
-    display: flex;
-    gap: 22px;
-    margin-top: 22px;
-    font-size: 13px;
-    color: var(--muted);
+  .plate b { color: var(--bulb); font-weight: 400; }
+  .scorestrip {
+    display: flex; gap: 28px; margin-top: 18px;
+    font-family: var(--pixel); font-size: 10px; color: var(--muted);
   }
-  .stats b { color: var(--text); }
+  .scorestrip b { color: var(--bulb); font-weight: 400; }
+  .scorestrip #stat-soon-wrap.zero { visibility: hidden; }
+
+  /* ── Controls ────────────────────────────────────────────── */
+  main { padding: 26px 0 90px; }
   .controls {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    align-items: center;
-    margin-bottom: 18px;
+    display: flex; flex-wrap: wrap; gap: 12px;
+    align-items: center; margin-bottom: 22px;
   }
-  .search {
-    position: relative;
-    flex: 1 1 240px;
-    max-width: 380px;
-  }
+  .search { position: relative; flex: 1 1 240px; max-width: 340px; }
   .search input {
     width: 100%;
-    padding: 11px 36px 11px 38px;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    background: var(--bg2);
-    color: var(--text);
-    font-size: 14px;
+    padding: 12px 34px 12px 16px;
+    border-radius: 4px;
+    border: 2px solid var(--wire);
+    background: var(--screen);
+    color: var(--ink);
+    font-family: var(--body); font-size: 14px;
     outline: none;
     transition: border-color .15s ease;
   }
   .search input::placeholder { color: var(--muted); }
-  .search input:focus { border-color: var(--accent); }
-  .search .mag {
-    position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
-    font-size: 14px; opacity: .55; pointer-events: none;
-  }
+  .search input:focus { border-color: var(--bulb); box-shadow: 0 0 12px rgba(255,215,106,.18); }
   .search .clear {
-    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
     border: none; background: transparent; color: var(--muted);
-    font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: 8px;
+    font-size: 15px; cursor: pointer; padding: 5px 9px; border-radius: 4px;
     display: none;
   }
-  .search .clear:hover { color: var(--text); background: var(--card-hover); }
+  .search .clear:hover { color: var(--ink); background: var(--cab); }
   .search.has-text .clear { display: block; }
   .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip {
-    background: var(--bg2);
-    border: 1px solid var(--border);
-    color: var(--muted);
-    font-family: inherit;
-    font-size: 13px;
-    font-weight: 600;
-    padding: 8px 14px;
-    border-radius: 999px;
-    cursor: pointer;
-    transition: color .15s ease, border-color .15s ease, background .15s ease;
+    font-family: var(--pixel); font-size: 9px;
+    background: var(--cab); color: #c8c4e0;
+    border: 2px solid var(--wire); border-radius: 4px;
+    padding: 10px 11px; cursor: pointer;
+    transition: color .12s ease, border-color .12s ease, background .12s ease;
   }
-  .chip:hover { color: var(--text); border-color: var(--accent); }
+  .chip:hover { color: var(--ink); border-color: var(--gc, var(--bulb)); }
+  .chip:active { transform: translateY(1px); }
   .chip.active {
-    background: linear-gradient(135deg, var(--accent), var(--accent2));
-    border-color: transparent;
-    color: #fff;
+    color: #0c0a14;
+    background: var(--gc, var(--bulb));
+    border-color: var(--gc, var(--bulb));
+    box-shadow: inset 0 2px 0 rgba(0,0,0,.4), 0 0 14px color-mix(in srgb, var(--gc, var(--bulb)) 35%, transparent);
   }
-  .chip .n { opacity: .65; font-weight: 500; margin-left: 5px; }
-  .result-line {
-    margin: -4px 0 16px;
-    font-size: 13px;
-    color: var(--muted);
-  }
-  .empty {
-    grid-column: 1 / -1;
-    text-align: center;
-    color: var(--muted);
-    padding: 48px 20px;
-    border: 1px dashed var(--border);
-    border-radius: 16px;
-    font-size: 14px;
-    line-height: 1.7;
-  }
-  .type-tag {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: .4px;
-    text-transform: uppercase;
-    color: var(--accent2);
-    background: rgba(159,108,255,.1);
-    border: 1px solid rgba(159,108,255,.25);
-    padding: 3px 9px;
-    border-radius: 999px;
-    align-self: flex-start;
-  }
-  main {
-    max-width: 1080px;
-    margin: 0 auto;
-    padding: 28px 24px 80px;
-  }
+  .chip .n { opacity: .85; margin-left: 6px; }
+  .result-line { margin: 0 0 16px; font-size: 13px; color: var(--muted); }
+  :focus-visible { outline: 2px solid var(--bulb); outline-offset: 2px; }
+
+  /* ── Cabinet tiles ───────────────────────────────────────── */
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-    gap: 18px;
+    grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+    gap: 16px;
   }
   .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 22px;
-    text-decoration: none;
-    color: inherit;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    transition: transform .15s ease, border-color .15s ease, background .15s ease;
+    --gc: #8fb4ff;
+    display: flex; flex-direction: column; gap: 12px;
+    background: var(--cab);
+    border: 1px solid var(--wire); border-radius: 6px;
+    padding: 14px 14px 16px;
+    text-decoration: none; color: inherit;
     position: relative;
-    overflow: hidden;
+    transition: border-color .15s ease;
   }
-  .card.playable:hover {
-    transform: translateY(-3px);
-    border-color: var(--accent);
-    background: var(--card-hover);
-  }
-  .card .icon {
-    width: 52px; height: 52px;
-    border-radius: 12px;
+  .card .screen {
+    position: relative;
+    height: 96px; border-radius: 4px;
+    background: radial-gradient(90% 90% at 50% 40%, #100d1e 0%, var(--screen) 100%);
+    border: 2px solid color-mix(in srgb, var(--gc) 45%, #241e3d);
     display: grid; place-items: center;
-    font-size: 26px;
-    background: rgba(108,140,255,.12);
-    border: 1px solid rgba(108,140,255,.25);
-  }
-  .card h2 { font-size: 17px; font-weight: 600; }
-  .card p {
-    font-size: 13px; color: var(--muted); line-height: 1.5; flex: 1;
-    /* clamp to 2 lines so every card keeps the same height */
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
     overflow: hidden;
+    transition: border-color .2s ease, box-shadow .2s ease;
   }
-  .badge {
-    position: absolute;
-    top: 16px; right: 16px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: .5px;
-    text-transform: uppercase;
-    padding: 4px 10px;
-    border-radius: 999px;
+  .card .screen::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 1px, transparent 1px 3px);
   }
-  .badge.play { background: rgba(61,220,151,.12); color: var(--green); border: 1px solid rgba(61,220,151,.3); }
-  .badge.soon { background: rgba(255,197,85,.1); color: var(--amber); border: 1px solid rgba(255,197,85,.25); }
-  .card.soon { cursor: default; opacity: .75; }
-  .card .play-hint {
-    font-size: 12px;
-    color: var(--accent);
-    font-weight: 600;
-    opacity: 0;
+  .card .icon { line-height: 1; transition: filter .2s ease; }
+  .card .icon svg { display: block; width: 64px; height: auto; position: relative; z-index: 1; }
+  .status {
+    position: absolute; top: 8px; left: 9px;
+    font-family: var(--pixel); font-size: 8px;
+    color: #8f88a5;
+  }
+  .status.ready { color: #69d95f; }
+  .play-flag {
+    position: absolute; right: 9px; bottom: 8px;
+    font-family: var(--pixel); font-size: 8px;
+    color: var(--gc); opacity: 0;
     transition: opacity .15s ease;
   }
-  /* reserve the hint's space on every card so the grid stays uniform */
-  .card.soon::after {
-    content: "";
-    display: block;
-    font-size: 12px;
-    font-weight: 600;
-    line-height: normal;
-    visibility: hidden;
-    height: 14px;
+  .card h2 { font-size: 17px; font-weight: 700; letter-spacing: .2px; }
+  .genre { font-family: var(--pixel); font-size: 8px; color: var(--gc); }
+  .card p {
+    font-size: 13px; color: var(--muted); line-height: 1.55; flex: 1;
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
   }
-  .card.playable:hover .play-hint { opacity: 1; }
+  .card.playable:hover .screen {
+    border-color: var(--gc);
+    box-shadow: inset 0 0 32px color-mix(in srgb, var(--gc) 22%, transparent),
+                0 0 14px color-mix(in srgb, var(--gc) 25%, transparent);
+  }
+  .card.playable:hover .icon { filter: saturate(1.15) brightness(1.08); }
+  .card.playable:hover .play-flag { opacity: 1; }
+  .card.soon { opacity: .55; cursor: default; }
+
   .add-card {
-    border: 1px dashed var(--border);
-    background: transparent;
-    display: grid;
-    place-items: center;
-    color: var(--muted);
-    min-height: 190px;
-    border-radius: 16px;
-    font-size: 14px;
-    text-align: center;
-    line-height: 1.6;
-    padding: 20px;
+    border: 1px dashed var(--wire); border-radius: 6px;
+    background: transparent; color: var(--muted);
+    min-height: 230px; padding: 22px;
+    display: grid; place-items: center; text-align: center;
+    font-size: 13px; line-height: 1.8;
   }
-  .add-card .plus { font-size: 28px; display: block; margin-bottom: 6px; color: var(--border); }
+  .add-card code { font-size: 12px; color: var(--bulb); }
+  .add-card .plus { font-size: 22px; display: block; margin-bottom: 8px; color: #4a4170; }
+
   footer {
-    text-align: center;
-    color: var(--muted);
-    font-size: 12px;
-    padding: 0 24px 40px;
+    border-top: 1px solid var(--wire);
+    padding: 22px 24px 44px;
+    text-align: center; color: var(--muted); font-size: 12px; line-height: 1.8;
+  }
+  footer code { color: var(--bulb); }
+
+  /* ── Attract-mode boot: one orchestrated moment, then quiet ── */
+  @media (prefers-reduced-motion: no-preference) {
+    .bulb { animation: lightup .12s steps(1) both; }
+    h1 { animation: flicker .9s steps(2) 0s 1 both; }
+  }
+  @keyframes lightup { to { background: var(--bulb); box-shadow: 0 0 6px rgba(255,215,106,.65); } }
+  @keyframes flicker {
+    0% { opacity: .15; } 30% { opacity: 1; } 45% { opacity: .3; }
+    60% { opacity: 1; } 75% { opacity: .6; } 100% { opacity: 1; }
+  }
+
+  @media (max-width: 640px) {
+    .marquee { padding: 26px 20px 20px; }
+    .plate { text-align: left; }
+    .scorestrip { gap: 18px; flex-wrap: wrap; }
   }
 </style>
 </head>
 <body>
-<header>
-  <div class="logo">
-    <div class="logo-mark">🕹️</div>
-    <div>
-      <h1>DevAI <span>Arcade</span></h1>
-      <div class="tagline">A growing collection of self-contained HTML games. Pick one and play.</div>
-      <div class="ai-note">🤖 All content here — including every game — is built using AI: <b>Qwen 3.8 Flash Next</b></div>
+<div class="wrap">
+<header class="marquee-shell">
+  <div class="marquee">
+    <div class="bulbs" id="bulbs" aria-hidden="true"></div>
+    <div class="marquee-head">
+      <div>
+        <h1>DEVAI <em>ARCADE</em></h1>
+        <div class="tagline">Seventeen self-contained HTML5 games. No install, no login — pick a cabinet and play.</div>
+      </div>
+      <div class="plate">ALL CONTENT BUILT BY AI:<br><b>QWEN 3.8 FLASH NEXT</b></div>
     </div>
-  </div>
-  <div class="stats">
-    <div><b id="stat-playable">0</b> playable</div>
-    <div><b id="stat-soon">0</b> coming soon</div>
+    <div class="scorestrip">
+      <div><b id="stat-playable">0</b> READY</div>
+      <div id="stat-soon-wrap"><b id="stat-soon">0</b> WAITING</div>
+    </div>
   </div>
 </header>
 
 <main>
   <div class="controls">
     <div class="search" id="search-wrap">
-      <span class="mag">🔍</span>
       <input id="search" type="search" placeholder="Search games…" autocomplete="off" aria-label="Search games">
       <button class="clear" id="search-clear" type="button" aria-label="Clear search">✕</button>
     </div>
@@ -285,14 +265,15 @@
   </div>
   <div class="result-line" id="result-line"></div>
   <div class="grid" id="game-grid"><!-- cards injected from GAMES registry --></div>
-  <div style="margin-top:18px">
+  <div style="margin-top:16px">
     <div class="add-card">
-      <span><span class="plus">＋</span>More games on the way.<br>Each game is a single HTML file inside <code>games/</code>.</span>
+      <span><span class="plus">＋</span>A new cabinet slots right in:<br>drop one HTML file into <code>games/</code> and add its entry below.</span>
     </div>
   </div>
 </main>
+</div>
 
-<footer>DevAI — powered by pure HTML5 · no build step · no dependencies · all content built with AI (Qwen 3.8 Flash Next)</footer>
+<footer>DevAI Arcade — every game is a single HTML file · no build step · no dependencies · all content built with AI (Qwen 3.8 Flash Next)</footer>
 
 <script>
 // ─── GAME REGISTRY ─────────────────────────────────────────────
@@ -444,6 +425,172 @@ const GAMES = [
 ];
 // ───────────────────────────────────────────────────────────────
 
+// ─── GENRE ACCENTS ─────────────────────────────────────────────
+// Each genre lights its chip, bezel and glow. Unknown types fall
+// back to the house blue, so a new game never renders colorless.
+const GENRE_COLORS = {
+  Arcade:   "#ff5964",
+  Action:   "#ff8a3d",
+  Sports:   "#69d95f",
+  Puzzle:   "#4fd8eb",
+  Maze:     "#ffd76a",
+  Shooter:  "#ff6bb0",
+  Survival: "#a78bfa",
+  Strategy: "#7f9cff",
+  Typing:   "#5fe6b0",
+  Tycoon:   "#f2c14e"
+};
+const DEFAULT_COLOR = "#8fb4ff";
+const colorFor = t => GENRE_COLORS[t] || DEFAULT_COLOR;
+
+// ─── PIXEL SPRITES ─────────────────────────────────────────────
+// Hand-plotted 12px sprites (one SVG <rect> per lit pixel, crisp
+// edges) so the cabinets match the CRT skin instead of shipping
+// stock emoji. Keyed by game title; unknown titles fall back to
+// the registry `icon`.
+const SPRITES = {
+  "Snake": { pal: { T:"#ff5964", H:"#8eff9e", e:"#0a0913", G:"#3ecf6b" },
+    rows: ["THeGGGGGGGG.",
+           ".........G..",
+           ".GGGGGGGGG..",
+           ".G..........",
+           ".GGGGGG....."] },
+  "Pong": { pal: { w:"#e8ecf8", o:"#ffd76a" },
+    rows: [".w........w.",
+           ".w...oo...w.",
+           ".w...oo...w.",
+           ".w........w."] },
+  "Breakout": { pal: { R:"#ff5964", O:"#ff8a3d", w:"#e8ecf8", P:"#4fd8eb" },
+    rows: [".RRRRRRRRRR.",
+           ".OOOOOOOOOO.",
+           "............",
+           ".....ww.....",
+           "............",
+           "...PPPPPP..."] },
+  "Memory Match": { pal: { C:"#4fd8eb", S:"#ffd76a", D:"#0a0913" },
+    rows: [".CCCC..SSSS.",
+           ".CCCC..SDDS.",
+           ".CCCC..SDDS.",
+           ".CCCC..SSSS."] },
+  "Flappy Bird": { pal: { Y:"#FFE13B", W:"#ffffff", O:"#ff8a3d" },
+    rows: ["...YYYY.....",
+           "..YWYYYOO...",
+           ".YYYYYYY....",
+           ".WWYYYY.....",
+           "..YYYY......"] },
+  "Pac-Man": { pal: { Y:"#FFE13B", o:"#e8ecf8" },
+    rows: ["....YYYY....",
+           "..YYYYYYYY..",
+           ".YYYYYYYYYY.",
+           ".YYYYY....o.",
+           ".YYYYY....o.",
+           ".YYYYYYYYYY.",
+           "..YYYYYYYY..",
+           "....YYYY...."] },
+  "Tic-Tac-Toe": { pal: { X:"#ff5964", O:"#4fd8eb" },
+    rows: [".X...X..OOO.",
+           "..X.X..O...O",
+           "...X...O...O",
+           "..X.X..O...O",
+           ".X...X..OOO."] },
+  "Neon Vanguard": { pal: { W:"#e8ecf8", F:"#4fd8eb" },
+    rows: [".....W......",
+           "....WWW.....",
+           "....WWW.....",
+           "...WWWWW....",
+           "..WWWWWWW...",
+           ".WW..W..WW..",
+           ".F...F...F.."] },
+  "Dead Light": { pal: { G:"#c9f5c9", K:"#0a0913" },
+    rows: ["..GGGGGG....",
+           ".GGGGGGGG...",
+           ".GKKGGKKG...",
+           ".GGGGGGGG...",
+           "..GKGKGKG...",
+           "...GGGG....."] },
+  "Missile Command": { pal: { R:"#ff5964", B:"#4fd8eb", H:"#e8ecf8" },
+    rows: ["R...........",
+           ".R...BB.....",
+           "..R...BB....",
+           "...R........",
+           "............",
+           "..H...H...H.",
+           ".HHH.HHH.HHH"] },
+  "Fruit Slicer": { pal: { g:"#3ecf6b", R:"#ff5964", K:"#241e3d" },
+    rows: ["...gggggg...",
+           "..gRRRRRRg..",
+           ".gRRKRRKRRg.",
+           ".gRRRRRRRRg.",
+           "..gggggggg.."] },
+  "Typing Defense": { pal: { K:"#5fe6b0", D:"#0a0913" },
+    rows: [".KKKKKKKKKK.",
+           ".KKDDDDDDKK.",
+           ".KKKKDDKKKK.",
+           ".KKKKDDKKKK.",
+           ".KKKKKKKKKK."] },
+  "Tower Defense": { pal: { T:"#c8b080" },
+    rows: [".T..T..T....",
+           ".TTTTTTTT...",
+           ".TTTTTTTT...",
+           ".T.TTTT.T...",
+           ".TTTTTTTT...",
+           ".TTTTTTTT..."] },
+  "Velvet Survivors": { pal: { W:"#b388ff", B:"#151222", R:"#ff5964" },
+    rows: ["WWW..RR..WWW",
+           "WWWWBBBBWWWW",
+           ".WWWWBBWWWW."] },
+  "Sniper Gallery": { pal: { w:"#e8ecf8", C:"#4fd8eb", R:"#ff5964" },
+    rows: [".....ww.....",
+           ".....ww.....",
+           "..CCCCCCCC..",
+           ".CC..ww..CC.",
+           ".CC..ww..CC.",
+           ".CC..RR..CC.",
+           ".CC..RR..CC.",
+           "..CCCCCCCC..",
+           ".....ww.....",
+           ".....ww....."] },
+  "Restaurant Rush": { pal: { b:"#e8a24a", S:"#fff3d6", L:"#69d95f", P:"#8a5a2e" },
+    rows: ["...bbbbbb...",
+           "..bSbbbbSb..",
+           ".LLLLLLLLLL.",
+           ".PPPPPPPPPP.",
+           "..bbbbbbbb.."] },
+  "Gas Station Tycoon": { pal: { P:"#f2c14e", D:"#1a1530", H:"#ff8a3d" },
+    rows: [".PPPPPP.....",
+           ".P....P.H...",
+           ".P.DD.P.H...",
+           ".P.DD.P.H...",
+           ".P....P.H...",
+           ".PPPPPPHH..."] }
+};
+function iconFor(g) {
+  const s = SPRITES[g.title];
+  if (!s) return g.icon;
+  const w = s.rows[0].length, h = s.rows.length;
+  let rects = "";
+  s.rows.forEach((row, y) => {
+    [...row].forEach((c, x) => {
+      const col = s.pal[c];
+      if (col) rects += `<rect x="${x}" y="${y}" width="1" height="1" fill="${col}"/>`;
+    });
+  });
+  return `<svg viewBox="0 0 ${w} ${h}" width="64" height="${(64 * h / w).toFixed(1)}" shape-rendering="crispEdges" aria-hidden="true">${rects}</svg>`;
+}
+
+// ─── MARQUEE BULBS ─────────────────────────────────────────────
+// Light up left→right once, staggered. Reduced-motion users get
+// them simply on (the media query drops the animation).
+(function buildBulbs() {
+  const box = document.getElementById("bulbs");
+  const n = 24;
+  box.innerHTML = Array.from({ length: n }, (_, i) => {
+    const d = window.matchMedia("(prefers-reduced-motion: no-preference)").matches
+      ? ` style="animation-delay:${(i * 34).toFixed(0)}ms"` : ` style="background:var(--bulb);box-shadow:0 0 8px rgba(255,215,106,.8)"`;
+    return `<span class="bulb"${d}></span>`;
+  }).join("");
+})();
+
 // ─── SEARCH & FILTER ───────────────────────────────────────────
 // Types are derived from the registry, so a new game's `type` gets a chip
 // automatically. Search matches title + description + type.
@@ -469,7 +616,8 @@ function renderChips() {
   const total = GAMES.length;
   box.innerHTML = ["All", ...types].map(t => {
     const n = t === "All" ? total : GAMES.filter(g => g.type === t).length;
-    return `<button type="button" class="chip ${t === activeType ? "active" : ""}" data-type="${t}" aria-pressed="${t === activeType}">${t}<span class="n">${n}</span></button>`;
+    const gc = t === "All" ? "var(--bulb)" : colorFor(t);
+    return `<button type="button" class="chip ${t === activeType ? "active" : ""}" data-type="${t}" aria-pressed="${t === activeType}" style="--gc:${gc}">${t}<span class="n">${n}</span></button>`;
   }).join("");
 }
 
@@ -479,6 +627,7 @@ function render() {
   for (const g of GAMES) (g.status === "play" ? playable++ : soon++);
   document.getElementById("stat-playable").textContent = playable;
   document.getElementById("stat-soon").textContent = soon;
+  document.getElementById("stat-soon-wrap").classList.toggle("zero", soon === 0);
 
   // Ready-to-play games always come first; "soon" cards follow.
   const ordered = [...GAMES].sort((a, b) =>
@@ -491,15 +640,17 @@ function render() {
     const tag = isPlay ? "a" : "div";
     const href = isPlay ? ` href="${g.file}"` : "";
     return `
-      <${tag} class="card ${isPlay ? "playable" : "soon"}"${href}>
-        <span class="badge ${isPlay ? "play" : "soon"}">${isPlay ? "Play" : "Soon"}</span>
-        <div class="icon">${g.icon}</div>
+      <${tag} class="card ${isPlay ? "playable" : "soon"}"${href} style="--gc:${colorFor(g.type)}">
+        <div class="screen">
+          <span class="status ${isPlay ? "ready" : ""}">${isPlay ? "READY" : "SOON"}</span>
+          <span class="icon">${iconFor(g)}</span>
+          ${isPlay ? '<span class="play-flag">▶ PLAY</span>' : ""}
+        </div>
         <h2>${g.title}</h2>
-        ${g.type ? `<span class="type-tag">${g.type}</span>` : ""}
+        ${g.type ? `<span class="genre">${g.type.toUpperCase()}</span>` : ""}
         <p>${g.desc}</p>
-        ${isPlay ? '<span class="play-hint">▶ Play now</span>' : ""}
       </${tag}>`;
-  }).join("") : `<div class="empty">No games match <b>${query || activeType}</b>.<br>Try another word or pick "All".</div>`;
+  }).join("") : `<div class="add-card" style="grid-column:1/-1;min-height:160px">No cabinet matches <b>${query || activeType}</b>.<br>Try another word or pick "All".</div>`;
 
   const line = document.getElementById("result-line");
   line.textContent = (query || activeType !== "All")

@@ -160,7 +160,7 @@
   }
   .card .screen {
     position: relative;
-    height: 96px; border-radius: 4px;
+    height: 128px; border-radius: 4px;
     background: radial-gradient(90% 90% at 50% 40%, #100d1e 0%, var(--screen) 100%);
     border: 2px solid color-mix(in srgb, var(--gc) 45%, #241e3d);
     display: grid; place-items: center;
@@ -174,14 +174,15 @@
   }
   .card .icon { line-height: 1; transition: filter .2s ease; }
   .card .icon svg { display: block; width: 64px; height: auto; position: relative; z-index: 1; }
+  .card .art { position: absolute; inset: 0; width: 100%; height: 100%; transition: transform .25s ease, filter .2s ease; }
   .status {
-    position: absolute; top: 8px; left: 9px;
+    position: absolute; top: 8px; left: 9px; z-index: 2;
     font-family: var(--pixel); font-size: 8px;
     color: #8f88a5;
   }
   .status.ready { color: #69d95f; }
   .play-flag {
-    position: absolute; right: 9px; bottom: 8px;
+    position: absolute; right: 9px; bottom: 8px; z-index: 2;
     font-family: var(--pixel); font-size: 8px;
     color: var(--gc); opacity: 0;
     transition: opacity .15s ease;
@@ -198,6 +199,7 @@
                 0 0 14px color-mix(in srgb, var(--gc) 25%, transparent);
   }
   .card.playable:hover .icon { filter: saturate(1.15) brightness(1.08); }
+  .card.playable:hover .art { transform: scale(1.05); filter: saturate(1.12) brightness(1.08); }
   .card.playable:hover .play-flag { opacity: 1; }
   .card.soon { opacity: .55; cursor: default; }
 
@@ -578,6 +580,263 @@ function iconFor(g) {
   return `<svg viewBox="0 0 ${w} ${h}" width="64" height="${(64 * h / w).toFixed(1)}" shape-rendering="crispEdges" aria-hidden="true">${rects}</svg>`;
 }
 
+// ─── ATTRACT-SCREEN ART ────────────────────────────────────────
+// One hand-coded 32×20 pixel scene per game, drawn into a buffer
+// and emitted as merged-run SVG (crisp edges, no image files).
+// Rendered with "slice" so it fills the card screen at any width.
+// Unknown titles fall back to the 12px SPRITES, then the registry
+// icon — a new game never renders empty.
+const AW = 32, AH = 20;
+const mk = () => Array.from({ length: AH }, () => Array(AW).fill(null));
+function set(b, x, y, c) {
+  x = Math.round(x); y = Math.round(y);
+  if (x >= 0 && x < AW && y >= 0 && y < AH && c) b[y][x] = c;
+}
+function rect(b, x, y, w, h, c) { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) set(b, x + i, y + j, c); }
+function frame(b, x, y, w, h, c) {
+  for (let i = 0; i < w; i++) { set(b, x + i, y, c); set(b, x + i, y + h - 1, c); }
+  for (let j = 0; j < h; j++) { set(b, x, y + j, c); set(b, x + w - 1, y + j, c); }
+}
+function line(b, x0, y0, x1, y1, c) {
+  const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1);
+  for (let i = 0; i <= n; i++) set(b, x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n, c);
+}
+function disk(b, cx, cy, r, c) {
+  for (let j = -r; j <= r; j++) for (let i = -r; i <= r; i++)
+    if (i * i + j * j <= r * r + r * 0.6) set(b, cx + i, cy + j, c);
+}
+function spark(b, x, y, c) { set(b, x, y - 1, c); set(b, x - 1, y, c); set(b, x + 1, y, c); set(b, x + 1, y - 1, c); set(b, x, y, c); }
+function rng(seed) {
+  let s = seed >>> 0;
+  return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+function stars(b, n, cols, seed, ymax = AH) {
+  const r = rng(seed);
+  for (let i = 0; i < n; i++) set(b, (r() * AW) | 0, (r() * ymax) | 0, cols[(r() * cols.length) | 0]);
+}
+function bg2(b, top, bottom) { for (let y = 0; y < AH; y++) rect(b, 0, y, AW, 1, y < AH / 2 ? top : bottom); }
+const FONT = {
+  T: ["111", "010", "010", "010", "010"], Y: ["101", "101", "010", "010", "010"],
+  P: ["110", "101", "110", "100", "100"], O: ["111", "101", "101", "101", "111"],
+  X: ["101", "101", "010", "101", "101"], K: ["101", "101", "110", "101", "101"],
+  A: ["010", "101", "111", "101", "101"], M: ["101", "111", "111", "101", "101"],
+  "$": ["010", "111", "010", "111", "010"],
+  "?": ["111", "001", "011", "000", "010"]
+};
+function glyph(b, x, y, ch, c) {
+  const g = FONT[ch]; if (!g) return;
+  g.forEach((row, j) => [...row].forEach((v, i) => { if (v === "1") set(b, x + i, y + j, c); }));
+}
+function ghost(b, x, y, c, eye) {
+  rect(b, x + 1, y, 3, 1, c); rect(b, x, y + 1, 5, 4, c);
+  set(b, x, y + 5, c); set(b, x + 2, y + 5, c); set(b, x + 4, y + 5, c);
+  set(b, x + 1, y + 2, eye); set(b, x + 3, y + 2, eye);
+}
+function cross(b, x, y, r, c) {
+  for (let i = -r; i <= r; i++) { set(b, x + i, y, c); set(b, x, y + i, c); }
+  cross.o = cross.o || 0;
+  set(b, x - r, y - r, c); set(b, x + r, y - r, c); set(b, x - r, y + r, c); set(b, x + r, y + r, c);
+}
+function pyr(b, cx, baseY, h, c) { for (let i = 0; i < h; i++) rect(b, cx - i, baseY - i, i * 2 + 1, 1, c); }
+
+const ART = {
+  "Snake": b => {
+    bg2(b, "#0d1526", "#0a0913"); stars(b, 26, ["#233252"], 1, 18);
+    disk(b, 8, 5, 2, "#ff5964"); set(b, 8, 2, "#3ecf6b"); set(b, 9, 3, "#3ecf6b");   // apple
+    const pts = [[2, 16], [10, 16], [10, 12], [18, 12], [18, 8], [25, 8]];
+    for (let i = 0; i < pts.length - 1; i++) {
+      line(b, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], "#2a9150");
+      line(b, pts[i][0], pts[i][1] - 1, pts[i + 1][0], pts[i + 1][1] - 1, "#3ecf6b");
+    }
+    rect(b, 24, 5, 4, 4, "#8eff9e"); set(b, 26, 6, "#0a0913");
+    line(b, 28, 7, 29, 6, "#ff5964"); line(b, 28, 7, 29, 8, "#ff5964");              // tongue
+  },
+  "Pong": b => {
+    bg2(b, "#101a33", "#0a0913");
+    rect(b, 0, 0, AW, 1, "#2e2748"); rect(b, 0, AH - 1, AW, 1, "#2e2748");
+    for (let y = 2; y < AH - 2; y += 4) rect(b, 15, y, 2, 2, "#39406b");             // net
+    rect(b, 3, 6, 2, 6, "#e8ecf8"); rect(b, 27, 10, 2, 6, "#e8ecf8");
+    rect(b, 18, 7, 2, 2, "#ffd76a"); set(b, 16, 7, "#7a6a35"); set(b, 14, 7, "#463f2a"); // ball + trail
+    set(b, 10, 2, "#ffd76a"); set(b, 12, 2, "#ffd76a"); set(b, 20, 2, "#ffd76a");    // score pips
+  },
+  "Breakout": b => {
+    bg2(b, "#181231", "#0a0913");
+    const cols = ["#ff5964", "#ff8a3d", "#ffd76a", "#4fd8eb"];
+    for (let r = 0; r < 4; r++) for (let i = 0; i < 6; i++) rect(b, 2 + i * 5, 3 + r * 3, 4, 2, cols[r]);
+    rect(b, 13, 17, 6, 2, "#4fd8eb");
+    rect(b, 21, 10, 2, 2, "#e8ecf8"); set(b, 19, 11, "#5b5478"); set(b, 17, 12, "#3a3457");
+  },
+  "Memory Match": b => {
+    bg2(b, "#131024", "#0a0913");
+    const back = (x, y) => { rect(b, x, y, 9, 9, "#1d4a60"); frame(b, x, y, 9, 9, "#4fd8eb"); };
+    back(2, 3); back(17, 11);
+    glyph(b, 5, 5, "?", "#4fd8eb"); glyph(b, 20, 13, "?", "#4fd8eb");
+    rect(b, 17, 3, 9, 9, "#ffd76a"); frame(b, 17, 3, 9, 9, "#c79a24"); spark(b, 21, 7, "#0a0913");
+    rect(b, 2, 11, 9, 9, "#e8ecf8"); frame(b, 2, 11, 9, 9, "#9a94b0"); spark(b, 6, 15, "#ff6bb0");
+  },
+  "Flappy Bird": b => {
+    bg2(b, "#12224a", "#0a0913"); stars(b, 20, ["#2c3e6e"], 7, 12);
+    disk(b, 27, 3, 2, "#e8e4f8");
+    rect(b, 5, 0, 6, 7, "#1f8a3d"); rect(b, 4, 7, 8, 2, "#2bb04f");
+    rect(b, 5, 15, 6, 5, "#1f8a3d"); rect(b, 4, 13, 8, 2, "#2bb04f");
+    rect(b, 22, 0, 6, 10, "#1f8a3d"); rect(b, 21, 10, 8, 2, "#2bb04f");
+    rect(b, 13, 8, 5, 3, "#FFE13B"); set(b, 17, 8, "#fff"); set(b, 18, 9, "#ff8a3d");
+    rect(b, 13, 9, 2, 1, "#e8c93a");
+    rect(b, 0, 19, AW, 1, "#3a2f1c");
+  },
+  "Pac-Man": b => {
+    bg2(b, "#0d0b1f", "#070611");
+    frame(b, 1, 1, 30, 18, "#2b2f8f");
+    [[6, 4], [14, 4], [22, 4], [9, 14], [22, 14], [13, 9], [19, 9]]
+      .forEach(([x, y]) => frame(b, x, y, 4, 2, "#2b2f8f"));
+    for (let x = 3; x < 29; x += 2) set(b, x, 12, "#ffd1a0");
+    disk(b, 26, 16, 1, "#ffd76a");
+    rect(b, 2, 12, 5, 4, "#FFE13B"); set(b, 5, 13, null); set(b, 6, 13, null); set(b, 6, 12, null); set(b, 6, 14, null);
+    ghost(b, 13, 6, "#ff5964", "#e8ecf8");
+  },
+  "Tic-Tac-Toe": b => {
+    bg2(b, "#131024", "#0a0913"); stars(b, 18, ["#2e2748"], 11);
+    rect(b, 12, 1, 1, 16, "#39406b"); rect(b, 21, 1, 1, 16, "#39406b");
+    rect(b, 3, 6, 26, 1, "#39406b"); rect(b, 3, 12, 26, 1, "#39406b");
+    glyph(b, 5, 1, "O", "#4fd8eb"); glyph(b, 23, 1, "O", "#4fd8eb");
+    glyph(b, 14, 7, "X", "#ff5964");
+    glyph(b, 5, 13, "X", "#ff5964"); glyph(b, 23, 13, "X", "#ff5964");
+  },
+  "Neon Vanguard": b => {
+    bg2(b, "#0e1430", "#070611"); stars(b, 40, ["#e8ecf8", "#4fd8eb", "#39406b"], 23);
+    rect(b, 16, 12, 2, 3, "#e8ecf8"); rect(b, 15, 14, 4, 2, "#e8ecf8"); rect(b, 13, 16, 8, 2, "#e8ecf8");
+    rect(b, 13, 18, 2, 1, "#4fd8eb"); rect(b, 16, 18, 2, 1, "#4fd8eb"); rect(b, 19, 18, 2, 1, "#4fd8eb");
+    disk(b, 26, 4, 3, "#5b5478"); set(b, 25, 3, "#8b84ad"); set(b, 27, 5, "#3a3457");   // asteroid
+    rect(b, 4, 3, 7, 2, "#ff6bb0"); rect(b, 5, 5, 5, 1, "#ff6bb0");
+    set(b, 6, 4, "#0a0913"); set(b, 9, 4, "#0a0913"); rect(b, 7, 8, 1, 2, "#ffd76a");   // enemy + shot
+  },
+  "Dead Light": b => {
+    rect(b, 0, 0, AW, 12, "#0d1024"); rect(b, 0, 12, AW, 8, "#0a0913");
+    disk(b, 26, 4, 3, "#e8e4f8"); set(b, 25, 3, "#c8c2e0"); stars(b, 22, ["#2c3252"], 17);
+    for (let y = 5; y < 19; y++) {                                                   // flashlight cone
+      const x1 = 1 + (18 - y) * 0.9, x2 = 1 + (18 - y) * 1.7;
+      rect(b, x1, y, Math.max(x2 - x1, 1), 1, "#1c2540");
+    }
+    rect(b, 12, 7, 3, 3, "#3f7a46"); rect(b, 12, 10, 3, 4, "#2f5c36");               // zombie
+    set(b, 12, 8, "#ff5964"); set(b, 14, 8, "#ff5964"); rect(b, 10, 10, 2, 1, "#3f7a46"); rect(b, 15, 10, 2, 1, "#3f7a46");
+    set(b, 21, 14, "#1e3522"); set(b, 22, 13, "#1e3522"); set(b, 22, 15, "#1e3522");  // lurker
+    rect(b, 0, 19, AW, 1, "#141a2e");
+  },
+  "Missile Command": b => {
+    rect(b, 0, 0, AW, 16, "#0d1024"); rect(b, 0, 16, AW, 4, "#141024");
+    stars(b, 30, ["#2c3252", "#39406b"], 31);
+    rect(b, 0, 18, AW, 2, "#1a1631");
+    line(b, 4, 0, 9, 7, "#ff5964"); line(b, 20, 0, 15, 9, "#ff5964"); line(b, 28, 0, 26, 5, "#ff5964");
+    pyr(b, 2, 17, 3, "#39708f"); pyr(b, 11, 17, 3, "#39708f");
+    pyr(b, 20, 17, 2, "#e8ecf8"); pyr(b, 24, 17, 2, "#e8ecf8"); pyr(b, 28, 17, 2, "#e8ecf8");
+    line(b, 2, 15, 9, 8, "#4fd8eb"); line(b, 11, 15, 15, 10, "#4fd8eb");
+    cross(b, 9, 7, 2, "#e8ecf8"); cross(b, 15, 9, 2, "#4fd8eb");
+  },
+  "Fruit Slicer": b => {
+    bg2(b, "#1b1230", "#0a0913"); stars(b, 16, ["#2e2748"], 5);
+    line(b, 14, 2, 21, 5, "#e8ecf8"); line(b, 24, 6, 29, 8, "#e8ecf8");               // slice arcs
+    rect(b, 4, 10, 12, 2, "#3ecf6b"); rect(b, 4, 12, 12, 3, "#ff5964");               // melon
+    set(b, 7, 13, "#241e3d"); set(b, 10, 12, "#241e3d"); set(b, 12, 14, "#241e3d");
+    rect(b, 6, 15, 8, 1, "#ff5964"); rect(b, 8, 16, 4, 1, "#3ecf6b");
+    disk(b, 22, 4, 3, "#ff8a3d"); disk(b, 22, 4, 2, "#ffb35c");                        // orange
+    line(b, 22, 2, 22, 6, "#ffe9b0"); line(b, 20, 4, 24, 4, "#ffe9b0");
+    disk(b, 28, 12, 2, "#ff5964"); rect(b, 28, 9, 1, 1, "#8a5a2e"); set(b, 29, 9, "#3ecf6b"); // apple
+  },
+  "Typing Defense": b => {
+    bg2(b, "#0e1426", "#0a0913"); stars(b, 14, ["#233252"], 9);
+    rect(b, 3, 4, 13, 7, "#0d1526"); frame(b, 3, 4, 13, 7, "#5fe6b0");                // word tile: TOP
+    glyph(b, 4, 5, "T", "#e8ecf8"); glyph(b, 8, 5, "O", "#e8ecf8"); glyph(b, 12, 5, "P", "#e8ecf8");
+    rect(b, 18, 8, 9, 7, "#0d1526"); frame(b, 18, 8, 9, 7, "#ffd76a");                // word tile: KO
+    glyph(b, 19, 9, "K", "#e8ecf8"); glyph(b, 23, 9, "O", "#e8ecf8");
+    rect(b, 0, 15, AW, 1, "#1c2740");
+    for (let x = 1; x < 30; x += 4) rect(b, x, 16, 3, 2, "#3a4f85");                  // keyboard
+    rect(b, 8, 18, 16, 1, "#3a4f85");
+  },
+  "Tower Defense": b => {
+    rect(b, 0, 0, AW, AH, "#0e1b14");
+    rect(b, 0, 2, 14, 4, "#33301f"); rect(b, 10, 2, 4, 11, "#33301f"); rect(b, 10, 10, 22, 4, "#33301f");
+    const r = rng(42);
+    for (let i = 0; i < 26; i++) set(b, (r() * AW) | 0, (r() * AH) | 0, "#12241a");
+    const tower = (x, y) => { rect(b, x, y, 5, 5, "#575366"); set(b, x, y, "#6e6a7a"); set(b, x + 2, y, "#6e6a7a"); set(b, x + 4, y, "#6e6a7a"); rect(b, x + 1, y + 1, 3, 2, "#2b2740"); set(b, x + 2, y + 2, "#4fd8eb"); };
+    tower(3, 9); tower(18, 3);
+    rect(b, 4, 3, 2, 2, "#ff5964"); rect(b, 8, 3, 2, 2, "#ff5964");                   // grunts
+    rect(b, 24, 11, 3, 3, "#a78bfa");                                                 // brute
+  },
+  "Velvet Survivors": b => {
+    bg2(b, "#150f2b", "#0a0913"); stars(b, 18, ["#2e2748"], 3);
+    disk(b, 25, 7, 4, "#e8e4f8"); disk(b, 22, 6, 3, "#150f2b");                       // waning crescent moon
+    rect(b, 13, 5, 5, 5, "#b388ff");                                                 // hero bat body
+    set(b, 13, 4, "#b388ff"); set(b, 17, 4, "#b388ff");                              // ears
+    set(b, 14, 7, "#ff5964"); set(b, 16, 7, "#ff5964");                              // eyes
+    set(b, 4, 4, "#b388ff"); rect(b, 4, 5, 3, 1, "#b388ff"); rect(b, 5, 6, 8, 2, "#b388ff");   // left wing
+    set(b, 7, 8, "#b388ff"); set(b, 9, 8, "#b388ff"); set(b, 11, 8, "#b388ff");      // scallops
+    set(b, 27, 4, "#b388ff"); rect(b, 25, 5, 3, 1, "#b388ff"); rect(b, 19, 6, 8, 2, "#b388ff"); // right wing
+    set(b, 20, 8, "#b388ff"); set(b, 22, 8, "#b388ff"); set(b, 24, 8, "#b388ff");
+    const dink = (x, y, c) => { set(b, x, y, c); set(b, x + 2, y, c); rect(b, x, y + 1, 3, 1, c); };
+    dink(2, 11, "#6a5a9e"); dink(7, 13, "#564a80"); dink(21, 13, "#6a5a9e");         // swarm
+    rect(b, 0, 16, AW, 1, "#241a3e");                                                 // mist
+    rect(b, 25, 12, 2, 4, "#241a3e"); set(b, 25, 12, "#e8ecf8");                      // hunter
+    rect(b, 0, 18, AW, 2, "#120d20");
+    set(b, 6, 17, "#ff5964"); set(b, 9, 18, "#ff5964"); set(b, 18, 17, "#ff5964");
+  },
+  "Sniper Gallery": b => {
+    for (let x = 0; x < AW; x += 4) { rect(b, x, 0, 2, 14, "#2a1436"); rect(b, x + 2, 0, 2, 14, "#1d0e26"); }
+    disk(b, 9, 2, 2, "#ff5964"); line(b, 9, 4, 9, 7, "#3a2450");
+    disk(b, 16, 1, 2, "#ffd76a"); line(b, 16, 3, 16, 7, "#3a2450");
+    disk(b, 27, 2, 2, "#4fd8eb"); line(b, 27, 4, 27, 7, "#3a2450");
+    const target = cx => { disk(b, cx, 10, 3, "#e8ecf8"); disk(b, cx, 10, 2, "#ff5964"); disk(b, cx, 10, 1, "#e8ecf8"); set(b, cx, 10, "#ff5964"); };
+    target(7); target(16); target(25);
+    rect(b, 0, 14, AW, 1, "#4a3462"); rect(b, 0, 15, AW, 5, "#181022");
+    set(b, 12, 17, "#2a1f3a"); set(b, 21, 18, "#2a1f3a");
+  },
+  "Restaurant Rush": b => {
+    bg2(b, "#171024", "#0a0913"); stars(b, 14, ["#2e2748"], 13);
+    rect(b, 2, 7, 1, 4, "#ffd76a"); rect(b, 4, 6, 1, 5, "#ffd76a"); rect(b, 6, 7, 1, 4, "#ffd76a"); // fries
+    rect(b, 1, 11, 7, 6, "#ff5964"); rect(b, 1, 13, 7, 1, "#e8ecf8");
+    rect(b, 13, 7, 7, 1, "#e8a24a"); set(b, 14, 7, "#fff3d6"); set(b, 16, 7, "#fff3d6"); set(b, 18, 7, "#fff3d6");
+    rect(b, 11, 8, 11, 2, "#e8a24a"); rect(b, 10, 10, 13, 1, "#69d95f");              // burger
+    rect(b, 11, 11, 11, 1, "#ffd76a"); set(b, 11, 12, "#ffd76a"); set(b, 21, 12, "#ffd76a");
+    rect(b, 11, 12, 11, 2, "#8a5a2e"); rect(b, 11, 14, 11, 2, "#c98a3e");
+    rect(b, 8, 16, 17, 1, "#4a4468");
+    line(b, 30, 5, 29, 9, "#5fe6b0"); rect(b, 25, 9, 7, 1, "#e8ecf8");                // drink
+    rect(b, 26, 10, 5, 7, "#ff5964"); rect(b, 26, 12, 5, 1, "#e8ecf8");
+  },
+  "Gas Station Tycoon": b => {
+    ["#2b1b4d", "#33205a", "#4a2a63", "#6e3a5e"].forEach((c, i) => rect(b, 0, i * 3, AW, 3, c));
+    disk(b, 25, 8, 4, "#ff8a3d"); rect(b, 20, 7, 11, 1, "#4a2a63"); rect(b, 20, 9, 11, 1, "#33205a");
+    frame(b, 0, 4, 6, 7, "#f2c14e"); rect(b, 1, 5, 4, 5, "#14111f"); glyph(b, 1, 5, "$", "#f2c14e");
+    rect(b, 2, 11, 1, 1, "#575366");
+    rect(b, 3, 4, 20, 1, "#e8ecf8"); rect(b, 3, 5, 20, 1, "#ff5964");                 // canopy
+    rect(b, 5, 6, 1, 6, "#575366"); rect(b, 20, 6, 1, 6, "#575366");
+    rect(b, 9, 10, 2, 3, "#f2c14e"); rect(b, 13, 10, 2, 3, "#f2c14e");                // pumps
+    rect(b, 0, 12, AW, 8, "#14111f"); rect(b, 0, 16, AW, 4, "#1d1a2c");               // road
+    for (let x = 1; x < 32; x += 6) rect(b, x, 18, 2, 1, "#ffd76a");
+    rect(b, 23, 12, 7, 2, "#ff5964"); rect(b, 24, 10, 4, 2, "#c04752");                // car
+    rect(b, 24, 14, 2, 1, "#3a3457"); rect(b, 28, 14, 2, 1, "#3a3457");
+  }
+};
+
+function artHtml(g) {
+  if (ART[g.title]) {
+    const b = mk();
+    ART[g.title](b);
+    let rects = "";
+    b.forEach((row, y) => {
+      let x = 0;
+      while (x < AW) {
+        const c = row[x];
+        if (!c) { x++; continue; }
+        let w = 1;
+        while (x + w < AW && row[x + w] === c) w++;
+        rects += `<rect x="${x}" y="${y}" width="${w}" height="1" fill="${c}"/>`;
+        x += w;
+      }
+    });
+    return `<svg class="art" viewBox="0 0 ${AW} ${AH}" preserveAspectRatio="xMidYMid slice" shape-rendering="crispEdges" aria-hidden="true">${rects}</svg>`;
+  }
+  return `<span class="icon">${iconFor(g)}</span>`;
+}
+
 // ─── MARQUEE BULBS ─────────────────────────────────────────────
 // Light up left→right once, staggered. Reduced-motion users get
 // them simply on (the media query drops the animation).
@@ -643,7 +902,7 @@ function render() {
       <${tag} class="card ${isPlay ? "playable" : "soon"}"${href} style="--gc:${colorFor(g.type)}">
         <div class="screen">
           <span class="status ${isPlay ? "ready" : ""}">${isPlay ? "READY" : "SOON"}</span>
-          <span class="icon">${iconFor(g)}</span>
+          ${artHtml(g)}
           ${isPlay ? '<span class="play-flag">▶ PLAY</span>' : ""}
         </div>
         <h2>${g.title}</h2>

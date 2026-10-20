@@ -2,6 +2,9 @@
 
 A growing collection of self-contained HTML5 games with a simple dashboard launcher.
 
+> **AI-built:** all content in this repository — including every game — is built using
+> AI: **Qwen 3.8 Flash Next**.
+
 ## Structure
 
 ```

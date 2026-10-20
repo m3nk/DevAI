@@ -54,6 +54,19 @@
     margin-top: 10px;
     font-size: 15px;
   }
+  .ai-note {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+    font-size: 13px;
+    color: var(--text);
+    background: rgba(108,140,255,.08);
+    border: 1px solid rgba(108,140,255,.3);
+    border-radius: 999px;
+    padding: 8px 14px;
+  }
+  .ai-note b { color: var(--accent); font-weight: 700; }
   .stats {
     display: flex;
     gap: 22px;
@@ -252,6 +265,7 @@
     <div>
       <h1>DevAI <span>Arcade</span></h1>
       <div class="tagline">A growing collection of self-contained HTML games. Pick one and play.</div>
+      <div class="ai-note">🤖 All content here — including every game — is built using AI: <b>Qwen 3.8 Flash Next</b></div>
     </div>
   </div>
   <div class="stats">
@@ -278,7 +292,7 @@
   </div>
 </main>
 
-<footer>DevAI — powered by pure HTML5 · no build step · no dependencies</footer>
+<footer>DevAI — powered by pure HTML5 · no build step · no dependencies · all content built with AI (Qwen 3.8 Flash Next)</footer>
 
 <script>
 // ─── GAME REGISTRY ─────────────────────────────────────────────

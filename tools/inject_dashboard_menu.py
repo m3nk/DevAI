@@ -59,6 +59,11 @@ CFG = {
     "gasstationtycoon.html": dict(corner="tl",
                                   keys=["gst_best_networth", "gst_best_day", "gst_muted"],
                                   pref=["gst_"]),
+    # contra.html letterboxes a 960x540 playfield inside a full-bleed canvas;
+    # its own canvas HUD runs to y=44 logical, so park the row just below it.
+    "contra.html":           dict(corner="tl", fit=(960, 540, 52),
+                                  keys=["contra_hi"], pref=["contra_"],
+                                  fg="#d9e6c8", bd="rgba(120,160,90,.45)"),
 }
 
 START = "<!-- DEVAI-MENU:BEGIN -->"
